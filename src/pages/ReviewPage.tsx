@@ -18,6 +18,7 @@ interface ReviewPageProps {
   watchListAgents: WatchListAgent[]
   onSave: (review: ReviewDraft) => Promise<void>
   saving: boolean
+  initialQaType?: QaType
 }
 
 interface ValidationState {
@@ -45,7 +46,8 @@ function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings
   if (!review.agentName.trim()) add('agentName', 'Add the agent name.')
   if (!review.callCenter) add('callCenter', 'Choose the call center.')
   if (settings.rules.callIdRequired && !review.callId.trim()) add('callId', 'Add the Call ID.')
-  if (!review.qaType) add('qaType', 'Choose CS or Groups.')
+  if (!review.qaType) add('qaType', 'Choose CS, Groups, or Sales.')
+  if (review.qaType === 'Sales' && !settings.criteria.Sales.length) add('qaType', 'Sales QA is waiting for the approved Sales scoring matrix from Ann/April.')
   if (settings.rules.confirmationRequired && review.confirmationNumber.trim().length < 2) {
     add('confirmationNumber', 'Add an itinerary, confirmation number, reservation number, or booking reference.')
   }
@@ -80,12 +82,12 @@ function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings
   return { errors, fieldErrors }
 }
 
-export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave, saving }: ReviewPageProps) {
-  const [review, setReview] = useState<ReviewDraft>(() => createReviewDraft(settings, user.displayName))
+export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave, saving, initialQaType = 'CS' }: ReviewPageProps) {
+  const [review, setReview] = useState<ReviewDraft>(() => createReviewDraft(settings, user.displayName, initialQaType))
   const [validation, setValidation] = useState<ValidationState>({ errors: [], fieldErrors: {} })
   const [showChecklist, setShowChecklist] = useState(false)
   const [draftRestored, setDraftRestored] = useState(false)
-  const draftKey = `qa-review-draft:${user.email}`
+  const draftKey = `qa-review-draft:${user.email}:${initialQaType.toLowerCase()}`
 
   useEffect(() => {
     try {
@@ -120,8 +122,10 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     () => review.criteria.reduce((sum, criterion) => sum + criterion.autoPoints, 0),
     [review.criteria],
   )
-  const kpi = review.qaType === 'Groups' ? settings.rules.groupsKpi : settings.rules.csKpi
-  const result = score >= kpi ? 'PASS' : 'FAIL'
+  const kpi = review.qaType === 'Groups' ? settings.rules.groupsKpi : review.qaType === 'Sales' ? settings.rules.salesKpi : settings.rules.csKpi
+  const hasCriticalError = review.qaType !== 'Groups' && Boolean(review.criticalErrors?.noNotes || review.criticalErrors?.voucherReference)
+  const displayedScore = hasCriticalError ? 0 : score
+  const result = !hasCriticalError && score >= kpi ? 'PASS' : 'FAIL'
   const markdowns = review.criteria.filter((criterion) => criterion.status === '✕ Markdown').length
   const watchListMatch = useMemo(() => findActiveWatchAgent(review.agentName, watchListAgents, review.callCenter), [review.agentName, review.callCenter, watchListAgents])
 
@@ -332,14 +336,18 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
 
             <label className={validation.fieldErrors.callCenter ? 'field invalid' : 'field'}>
               <span>Call Center</span>
-              <select
+              <input
+                list="qa-call-centers"
                 value={review.callCenter}
                 onChange={(event) => updateField('callCenter', event.target.value)}
+                placeholder="Pick or type a call center"
+                autoComplete="off"
                 disabled={!user.permissions.canEditAgentDetails}
-              >
-                <option value="">Select a call center</option>
-                {settings.callCenters.map((center) => <option key={center} value={center}>{center}</option>)}
-              </select>
+              />
+              <datalist id="qa-call-centers">
+                {settings.callCenters.map((center) => <option key={center} value={center} />)}
+              </datalist>
+              <em>Choose an existing call center or type a new one.</em>
               {validation.fieldErrors.callCenter && <small>{validation.fieldErrors.callCenter}</small>}
             </label>
 
@@ -361,6 +369,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
               <select value={review.qaType} onChange={(event) => updateQaType(event.target.value as QaType)}>
                 <option value="CS">CS</option>
                 <option value="Groups">Groups</option>
+                <option value="Sales" disabled={!settings.criteria.Sales.length}>Sales{!settings.criteria.Sales.length ? ' — matrix pending approval' : ''}</option>
               </select>
             </label>
 
@@ -400,7 +409,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
           </div>
 
           <aside className="score-panel">
-            <div><span>Final Score</span><strong>{score}</strong></div>
+            <div><span>Final Score</span><strong>{displayedScore}</strong></div>
             <div><span>KPI Target</span><strong>{kpi}</strong></div>
             <div><span>Result</span><strong className={result === 'PASS' ? 'pass-text' : 'fail-text'}>{result}</strong></div>
             <div><span>Markdowns</span><strong>{markdowns}</strong></div>
@@ -470,6 +479,35 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
             </tbody>
           </table>
         </div>
+
+        {review.qaType !== 'Groups' && (
+          <section className="critical-errors-panel">
+            <div className="panel-heading wrap-heading">
+              <div>
+                <p className="eyebrow">Critical errors</p>
+                <h3>Documentation Criticals</h3>
+                <p className="muted">Barbara confirmed either critical makes the entire QA 0% and FAIL. Documentation can still be scored Partial when no critical applies.</p>
+              </div>
+            </div>
+            <label className="toggle-row danger-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(review.criticalErrors?.noNotes)}
+                onChange={(event) => updateField('criticalErrors', { ...(review.criticalErrors || { noNotes: false, voucherReference: false }), noNotes: event.target.checked })}
+              />
+              <span><strong>No Notes</strong><small>Automatic 0% QA / FAIL.</small></span>
+            </label>
+            <label className="toggle-row danger-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(review.criticalErrors?.voucherReference)}
+                onChange={(event) => updateField('criticalErrors', { ...(review.criticalErrors || { noNotes: false, voucherReference: false }), voucherReference: event.target.checked })}
+              />
+              <span><strong>Voucher # in Notes / Slack / Macro</strong><small>Automatic 0% QA / FAIL and should be escalated with IT# and Agent Name.</small></span>
+            </label>
+            {hasCriticalError && <div className="validation-banner"><strong>Critical fail active:</strong><span>This review will save as 0% / FAIL.</span></div>}
+          </section>
+        )}
 
         <div className="review-additional-comments">
           <label className="field">

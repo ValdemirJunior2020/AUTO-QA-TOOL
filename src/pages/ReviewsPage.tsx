@@ -531,6 +531,9 @@ export function ReviewsPage({
               <option value="Groups">
                 Groups
               </option>
+              <option value="Sales">
+                Sales
+              </option>
             </select>
           </label>
 

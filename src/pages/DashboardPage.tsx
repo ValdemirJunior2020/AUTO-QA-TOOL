@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import type { QaUser, ReviewRecord, WatchListAgent } from '../types'
 import { getWatchListMetrics } from '../lib/watchList'
-import { VacationBanner } from '../components/VacationBanner'
 
 interface DashboardPageProps {
   user: QaUser
@@ -156,7 +155,6 @@ export function DashboardPage({
 
   return (
     <div className="page-stack">
-      <VacationBanner />
 
       <section className="hero-panel dashboard-hero-with-watch">
         <div>

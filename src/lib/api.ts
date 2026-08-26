@@ -133,7 +133,13 @@ export async function bootstrap(session: AuthSession): Promise<BootstrapResponse
     }
 
     const settingsSnap = await firestore.collection('settings').doc('main').get()
-    const settings = settingsSnap.exists ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } as AppSettings : DEFAULT_SETTINGS
+    const storedSettings = settingsSnap.exists ? (settingsSnap.data() || {}) : {}
+    const settings: AppSettings = {
+      ...DEFAULT_SETTINGS,
+      ...storedSettings,
+      criteria: { ...DEFAULT_SETTINGS.criteria, ...(storedSettings.criteria || {}) },
+      rules: { ...DEFAULT_SETTINGS.rules, ...(storedSettings.rules || {}) },
+    }
 
     let users: QaUser[] = [user]
     if (user.role === 'admin' && ADMIN_EMAILS.has(email)) {
@@ -162,7 +168,7 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
   if (!actor.permissions.canSubmitReviews) throw new Error('Your account cannot submit QA reviews.')
   if (!review.agentStartDate) throw new Error('Add the agent start date.')
   if (!review.agentName.trim()) throw new Error('Add the agent name.')
-  if (!settings.callCenters.includes(review.callCenter)) throw new Error('Select a valid call center.')
+  if (!review.callCenter.trim()) throw new Error('Add or choose a call center.')
   if (settings.rules.callIdRequired && !review.callId.trim()) throw new Error('Add the Call ID.')
   if (settings.rules.confirmationRequired && review.confirmationNumber.trim().length < 2) throw new Error('Add an itinerary, confirmation number, reservation number, or booking reference.')
   if (!review.callLength.trim()) throw new Error('Add the call length.')
@@ -184,8 +190,14 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
     return { ...definition, status, partialPoints: status === 'Partial' ? definition.points / 2 : 0, autoPoints, customNote }
   })
 
-  const kpiTarget = review.qaType === 'Groups' ? settings.rules.groupsKpi : settings.rules.csKpi
-  const result = finalScore >= kpiTarget ? 'PASS' : 'FAIL'
+  const kpiTarget = review.qaType === 'Groups' ? settings.rules.groupsKpi : review.qaType === 'Sales' ? settings.rules.salesKpi : settings.rules.csKpi
+  const criticalErrors = {
+    noNotes: Boolean(review.criticalErrors?.noNotes),
+    voucherReference: Boolean(review.criticalErrors?.voucherReference),
+  }
+  const hasCriticalError = review.qaType !== 'Groups' && (criticalErrors.noNotes || criticalErrors.voucherReference)
+  if (hasCriticalError) finalScore = 0
+  const result = !hasCriticalError && finalScore >= kpiTarget ? 'PASS' : 'FAIL'
   const now = new Date().toISOString()
   return {
     id: review.requestId || `review-${Date.now()}`,
@@ -195,7 +207,7 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
     reviewDate: dateOnly(review.todayDate || now),
     evaluator: actor.role === 'admin' ? review.evaluator : actor.displayName,
     agentName: review.agentName.trim(),
-    callCenter: review.callCenter,
+    callCenter: review.callCenter.trim(),
     callId: review.callId.trim().replace(/\s+/g, ''),
     itineraryNumber: review.confirmationNumber.trim(),
     emailSent: false,
@@ -204,11 +216,16 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
     kpiTarget,
     result,
     markdowns,
-    issueSummary: criteria.filter((item) => item.customNote).map((item) => `${item.name} - ${item.status} - ${item.customNote}`).join(' | '),
+    issueSummary: [
+      ...criteria.filter((item) => item.customNote).map((item) => `${item.name} - ${item.status} - ${item.customNote}`),
+      ...(criticalErrors.noNotes ? ['CRITICAL: No Notes — automatic 0% QA / FAIL'] : []),
+      ...(criticalErrors.voucherReference ? ['CRITICAL: Voucher # in Notes / Slack / Macro — automatic 0% QA / FAIL; escalate with IT# and Agent Name'] : []),
+    ].join(' | '),
     callLength: review.callLength.trim(),
     callDate: dateOnly(review.callDate),
     criteria,
     additionalComments: String(review.additionalComments || '').trim(),
+    criticalErrors,
   }
 }
 

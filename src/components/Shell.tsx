@@ -10,6 +10,7 @@ import { SUPER_ADMIN_EMAILS, normalizeEmail } from '../lib/firebase'
 export type AppPage =
   | 'dashboard'
   | 'review'
+  | 'sales'
   | 'watchlist'
   | 'history'
   | 'analytics'
@@ -31,6 +32,7 @@ function pageLabel(page: string): string {
 
   if (normalized === 'dashboard') return 'Dashboard'
   if (normalized === 'review') return 'New Review'
+  if (normalized === 'sales') return 'Sales QA'
   if (normalized === 'watchlist') return 'Watch List'
   if (normalized === 'history') return 'Review History'
   if (normalized === 'analytics') return 'Agent Performance'
@@ -105,6 +107,7 @@ export function Shell({
   }> = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'review', label: 'New Review' },
+    { id: 'sales', label: '💼 Sales QA' },
     { id: 'watchlist', label: '👁 Watch List' },
     { id: 'history', label: 'Review History' },
     { id: 'analytics', label: '📈 Agent Performance', adminOnly: true },

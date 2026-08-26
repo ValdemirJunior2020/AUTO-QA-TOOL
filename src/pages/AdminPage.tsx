@@ -108,6 +108,35 @@ export function AdminPage({
     }))
   }
 
+
+  const addSalesCriterion = () => {
+    setDraftSettings((current) => {
+      const nextNumber = current.criteria.Sales.length + 1
+      return {
+        ...current,
+        criteria: {
+          ...current.criteria,
+          Sales: [
+            ...current.criteria.Sales,
+            { number: nextNumber, name: '', points: 0, notes: '' },
+          ],
+        },
+      }
+    })
+  }
+
+  const removeSalesCriterion = (index: number) => {
+    setDraftSettings((current) => ({
+      ...current,
+      criteria: {
+        ...current.criteria,
+        Sales: current.criteria.Sales
+          .filter((_, criterionIndex) => criterionIndex !== index)
+          .map((criterion, criterionIndex) => ({ ...criterion, number: criterionIndex + 1 })),
+      },
+    }))
+  }
+
   const saveCallCenters = async (callCenters: string[]) => {
     const nextSettings = { ...draftSettings, callCenters }
     await onSaveSettings(nextSettings)
@@ -173,8 +202,11 @@ export function AdminPage({
   const saveSettings = async () => {
     const csTotal = draftSettings.criteria.CS.reduce((sum, criterion) => sum + Number(criterion.points || 0), 0)
     const groupsTotal = draftSettings.criteria.Groups.reduce((sum, criterion) => sum + Number(criterion.points || 0), 0)
-    if (csTotal !== 100 || groupsTotal !== 100) {
-      const proceed = window.confirm(`CS totals ${csTotal} points and Groups totals ${groupsTotal} points. Save anyway?`)
+    const salesTotal = draftSettings.criteria.Sales.reduce((sum, criterion) => sum + Number(criterion.points || 0), 0)
+    const salesInvalid = draftSettings.criteria.Sales.length > 0 && salesTotal !== 100
+    if (csTotal !== 100 || groupsTotal !== 100 || salesInvalid) {
+      const salesMessage = draftSettings.criteria.Sales.length ? ` and Sales totals ${salesTotal} points` : ' and Sales matrix is still pending'
+      const proceed = window.confirm(`CS totals ${csTotal} points, Groups totals ${groupsTotal} points${salesMessage}. Save anyway?`)
       if (!proceed) return
     }
     await onSaveSettings(draftSettings)
@@ -325,13 +357,15 @@ export function AdminPage({
             <button type="button" className="primary-button" onClick={saveSettings} disabled={busy}>Save Criteria</button>
           </div>
 
-          {(['CS', 'Groups'] as QaType[]).map((qaType) => (
+          {(['CS', 'Groups', 'Sales'] as QaType[]).map((qaType) => (
             <div key={qaType} className="criteria-editor-section">
               <div className="criteria-editor-heading">
                 <h3>{qaType} Criteria</h3>
                 <span>{draftSettings.criteria[qaType].reduce((sum, item) => sum + Number(item.points || 0), 0)} total points</span>
+                {qaType === 'Sales' && <button type="button" className="secondary-button compact" onClick={addSalesCriterion}>Add Sales Criterion</button>}
               </div>
               <div className="criteria-editor-list">
+                {qaType === 'Sales' && draftSettings.criteria.Sales.length === 0 && <p className="muted">Sales matrix pending Ann Stephenson / April approval. Sales reviews stay disabled until approved criteria are added here.</p>}
                 {draftSettings.criteria[qaType].map((criterion, index) => (
                   <article key={`${qaType}-${criterion.number}`} className="criteria-editor-card">
                     <div className="criterion-number">{criterion.number}</div>
@@ -353,6 +387,7 @@ export function AdminPage({
                       <span>Notes / Issue Found description</span>
                       <textarea value={criterion.notes} onChange={(event) => updateCriterion(qaType, index, { notes: event.target.value })} />
                     </label>
+                    {qaType === 'Sales' && <button type="button" className="danger-button compact" onClick={() => removeSalesCriterion(index)}>Remove</button>}
                   </article>
                 ))}
               </div>
@@ -402,6 +437,14 @@ export function AdminPage({
                 type="number"
                 value={draftSettings.rules.csKpi}
                 onChange={(event) => setDraftSettings((current) => ({ ...current, rules: { ...current.rules, csKpi: Number(event.target.value) } }))}
+              />
+            </label>
+            <label className="field">
+              <span>Sales KPI</span>
+              <input
+                type="number"
+                value={draftSettings.rules.salesKpi}
+                onChange={(event) => setDraftSettings((current) => ({ ...current, rules: { ...current.rules, salesKpi: Number(event.target.value) } }))}
               />
             </label>
             <label className="field">

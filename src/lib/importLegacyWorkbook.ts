@@ -127,7 +127,7 @@ function reviewFromRow(data: Record<string, unknown>, rowNumber: number): Review
     callId,
     itineraryNumber: cellText(data['Itinerary Number']),
     emailSent: bool(data['Email Sent?']),
-    qaType: cellText(data['QA Type']) === 'Groups' ? 'Groups' : 'CS',
+    qaType: cellText(data['QA Type']) === 'Groups' ? 'Groups' : cellText(data['QA Type']) === 'Sales' ? 'Sales' : 'CS',
     finalScore: number(data['Final Score']),
     kpiTarget: number(data['KPI Target'], cellText(data['QA Type']) === 'Groups' ? 85 : 90),
     result: resultText === 'PASS' ? 'PASS' : 'FAIL',

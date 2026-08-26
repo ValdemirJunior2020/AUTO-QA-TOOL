@@ -67,6 +67,7 @@ function getPresencePageLabel(page: AppPage): string {
   const labels: Record<AppPage, string> = {
     dashboard: 'Dashboard',
     review: 'New Review',
+    sales: 'Sales QA',
     watchlist: 'Watch List',
     history: 'Review History',
     analytics: 'Agent Performance',
@@ -578,6 +579,18 @@ export default function App() {
           watchListAgents={watchListAgents}
           onSave={handleSaveReview}
           saving={busy}
+        />
+      )}
+
+      {activePage === 'sales' && (
+        <ReviewPage
+          user={currentUser}
+          settings={settings}
+          evaluators={activeEvaluators}
+          watchListAgents={watchListAgents}
+          onSave={handleSaveReview}
+          saving={busy}
+          initialQaType="Sales"
         />
       )}
 

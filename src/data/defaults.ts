@@ -57,6 +57,7 @@ export const DEFAULT_CRITERIA: CriteriaSettings = {
       notes: 'Summarizes outcome, confirms next step, and closes clearly.',
     },
   ],
+  Sales: [],
   Groups: [
     {
       number: 1,
@@ -120,6 +121,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     noteRequiredForMarkdownOrPartial: true,
     csKpi: 90,
     groupsKpi: 85,
+    salesKpi: 90,
   },
 }
 
@@ -155,6 +157,7 @@ export function createReviewDraft(settings: AppSettings, evaluator: string, qaTy
     callDate: '',
     criteria: createCriterionAnswers(settings, qaType),
     additionalComments: '',
+    criticalErrors: { noNotes: false, voucherReference: false },
   }
 }
 

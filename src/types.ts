@@ -1,5 +1,5 @@
 export type UserRole = 'admin' | 'evaluator' | 'viewer'
-export type QaType = 'CS' | 'Groups'
+export type QaType = 'CS' | 'Groups' | 'Sales'
 export type CriterionStatus = '✓ Followed' | '✕ Markdown' | 'N/A' | 'Partial' | ''
 
 export interface UserPermissions {
@@ -33,6 +33,7 @@ export interface CriterionDefinition {
 export interface CriteriaSettings {
   CS: CriterionDefinition[]
   Groups: CriterionDefinition[]
+  Sales: CriterionDefinition[]
 }
 
 export interface AppRules {
@@ -42,6 +43,7 @@ export interface AppRules {
   noteRequiredForMarkdownOrPartial: boolean
   csKpi: number
   groupsKpi: number
+  salesKpi: number
 }
 
 export interface AppSettings {
@@ -72,6 +74,7 @@ export interface ReviewDraft {
   callDate: string
   criteria: CriterionAnswer[]
   additionalComments: string
+  criticalErrors?: { noNotes: boolean; voucherReference: boolean }
 }
 
 export interface ReviewRecord {
@@ -98,6 +101,7 @@ export interface ReviewRecord {
   callDate?: string
   criteria?: CriterionAnswer[]
   additionalComments?: string
+  criticalErrors?: { noNotes: boolean; voucherReference: boolean }
 }
 
 export interface AuthSession {
