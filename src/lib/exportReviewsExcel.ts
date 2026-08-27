@@ -226,11 +226,21 @@ function getCallDate(
 function getItinerary(
   review: ReviewRecord,
 ): string {
+  const legacyColumns = (review as any).legacyColumns as
+    | Record<string, unknown>
+    | undefined
+
   return text(
     (review as any).itineraryNumber ||
       (review as any).itinerary ||
       (review as any).confirmationNumber ||
-      (review as any).bookingReference,
+      (review as any).bookingReference ||
+      legacyColumns?.['IT# / Itinerary Number'] ||
+      legacyColumns?.['Itinerary Number'] ||
+      legacyColumns?.['Itinerary'] ||
+      legacyColumns?.['IT#'] ||
+      legacyColumns?.['Itinerary #'] ||
+      legacyColumns?.['Confirmation Number'],
   )
 }
 
@@ -1219,9 +1229,6 @@ export async function exportReviewsToExcel(
             'Not available',
         ],
         [
-          'Itinerary',
-          itinerary ||
-            'Not available',
           'Call ID',
           callId ||
             'Not available',
@@ -1229,6 +1236,8 @@ export async function exportReviewsToExcel(
           (review as any).emailSent
             ? 'Yes'
             : 'No',
+          '',
+          '',
         ],
       ]
 
@@ -1324,7 +1333,95 @@ export async function exportReviewsToExcel(
         },
       }
 
-      currentRow += 1
+      /*
+       * Barbara requested that the IT# be easy to see on every
+       * downloaded review report. Give it its own full-width row.
+       */
+      worksheet.mergeCells(
+        currentRow,
+        2,
+        currentRow,
+        6,
+      )
+
+      const itineraryLabelCell =
+        worksheet.getCell(
+          currentRow,
+          1,
+        )
+
+      itineraryLabelCell.value =
+        'IT# / Itinerary Number'
+
+      itineraryLabelCell.font = {
+        name: 'Arial',
+        size: 11,
+        bold: true,
+        color: {
+          argb: COLORS.white,
+        },
+      }
+
+      itineraryLabelCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: {
+          argb: COLORS.purple,
+        },
+      }
+
+      itineraryLabelCell.alignment = {
+        vertical: 'middle',
+        horizontal: 'center',
+        wrapText: true,
+      }
+
+      const itineraryValueCell =
+        worksheet.getCell(
+          currentRow,
+          2,
+        )
+
+      itineraryValueCell.value =
+        itinerary ||
+        'Not available'
+
+      itineraryValueCell.font = {
+        name: 'Arial',
+        size: 12,
+        bold: true,
+        color: {
+          argb: COLORS.black,
+        },
+      }
+
+      itineraryValueCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: {
+          argb: COLORS.yellow,
+        },
+      }
+
+      itineraryValueCell.alignment = {
+        vertical: 'middle',
+        horizontal: 'left',
+        wrapText: true,
+      }
+
+      applyBorders(
+        worksheet,
+        currentRow,
+        currentRow,
+        1,
+        6,
+      )
+
+      worksheet.getRow(
+        currentRow,
+      ).height = 32
+
+      currentRow += 2
 
       const criteriaHeader =
         worksheet.getRow(
@@ -1655,13 +1752,13 @@ export async function exportReviewsToExcel(
   return filename
 }
 const GOOGLE_SHEET_HEADERS = [
-  'Saved Timestamp', 'Agent Start Date', "Today's Date", 'Evaluator', 'Agent Name', 'Call Center', 'Call ID', 'Email Sent?', 'QA Type', 'Final Score', 'KPI Target', 'Result', 'Markdowns',
+  'Saved Timestamp', 'Agent Start Date', "Today's Date", 'Evaluator', 'Agent Name', 'Call Center', 'IT# / Itinerary Number', 'Call ID', 'Email Sent?', 'QA Type', 'Final Score', 'KPI Target', 'Result', 'Markdowns',
   ...Array.from({ length: 9 }, (_, index) => {
     const n = index + 1
     return [`Criteria ${n} #`, `Criteria ${n} Name`, `Criteria ${n} Max Points`, `Criteria ${n} Status`, `Criteria ${n} Partial Points`, `Criteria ${n} Auto Points`, `Criteria ${n} Notes / Issue Found`]
   }).flat(),
   ...Array.from({ length: 9 }, (_, index) => `Custom Note ${index + 1}`),
-  'Itinerary Number', 'Length of Call', 'Date of Call', 'Request ID',
+  'Length of Call', 'Date of Call', 'Request ID',
 ]
 
 function sheetStyleRow(review: ReviewRecord): unknown[] {
@@ -1670,6 +1767,12 @@ function sheetStyleRow(review: ReviewRecord): unknown[] {
     return GOOGLE_SHEET_HEADERS.map((header) => {
       if (header === 'Email Sent?') return Boolean(review.emailSent)
       if (header === 'Request ID') return review.id || legacyColumns[header] || ''
+      if (header === 'IT# / Itinerary Number') {
+        return (
+          getItinerary(review) ||
+          ''
+        )
+      }
       return legacyColumns[header] ?? ''
     })
   }
@@ -1682,7 +1785,8 @@ function sheetStyleRow(review: ReviewRecord): unknown[] {
     review.evaluator || '',
     review.agentName || '',
     review.callCenter || '',
-    review.callId || '',
+    getItinerary(review),
+    getCallId(review),
     Boolean(review.emailSent),
     review.qaType || '',
     Number(review.finalScore || 0),
@@ -1709,7 +1813,6 @@ function sheetStyleRow(review: ReviewRecord): unknown[] {
   }
 
   row.push(
-    review.itineraryNumber || '',
     review.callLength || '',
     review.callDate || '',
     review.id || '',
@@ -1773,7 +1876,7 @@ export async function exportReviewsGoogleSheetStyle(
     const headerName = GOOGLE_SHEET_HEADERS[index] || ''
     if (/Name|Notes|Custom Note|Issue Found/.test(headerName)) column.width = /Notes|Custom/.test(headerName) ? 34 : 28
     else if (/Timestamp|Date/.test(headerName)) column.width = 18
-    else if (/Call ID|Itinerary|Request ID/.test(headerName)) column.width = 26
+    else if (/Call ID|IT#|Itinerary|Request ID/.test(headerName)) column.width = 26
     else column.width = 14
   })
 
