@@ -177,26 +177,37 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
 
   let finalScore = 0
   let markdowns = 0
-  const criteria: CriterionAnswer[] = settings.criteria[review.qaType].map((definition, index) => {
+  let criteria: CriterionAnswer[] = settings.criteria[review.qaType].map((definition, index) => {
     const answer = review.criteria.find((item) => Number(item.number) === Number(definition.number)) || review.criteria[index]
     const status = answer?.status || ''
-    if (!settings.statusOptions.includes(status as any)) throw new Error(`Select a status for criterion ${definition.number}: ${definition.name}.`)
+    const normalizedName = definition.name.toLowerCase()
+    const criticalEligible = review.qaType !== 'Groups' && (normalizedName.includes('matrix compliance') || normalizedName.includes('documentation quality'))
+    const allowedStatus = settings.statusOptions.includes(status as any) || (status === 'Critical' && criticalEligible)
+    if (!allowedStatus) throw new Error(`Select a status for criterion ${definition.number}: ${definition.name}.`)
     const customNote = String(answer?.customNote || '').trim()
+    const criticalReason = String(answer?.criticalReason || '').trim()
     if (settings.rules.noteRequiredForMarkdownOrPartial && (status === '✕ Markdown' || status === 'Partial') && !customNote) throw new Error(`Add a clear note for criterion ${definition.number} because ${status} was selected.`)
+    if (status === 'Critical' && !criticalReason) throw new Error(`Select a Critical reason for criterion ${definition.number}: ${definition.name}.`)
     if (!actor.permissions.canEditCustomNotes && customNote) throw new Error('Your account cannot add custom notes.')
     const autoPoints = status === '✓ Followed' || status === 'N/A' ? definition.points : status === 'Partial' ? definition.points / 2 : 0
     if (status === '✕ Markdown') markdowns += 1
     finalScore += autoPoints
-    return { ...definition, status, partialPoints: status === 'Partial' ? definition.points / 2 : 0, autoPoints, customNote }
+    return { ...definition, status, partialPoints: status === 'Partial' ? definition.points / 2 : 0, autoPoints, customNote, criticalReason }
   })
 
   const kpiTarget = review.qaType === 'Groups' ? settings.rules.groupsKpi : review.qaType === 'Sales' ? settings.rules.salesKpi : settings.rules.csKpi
+  const criticalCriteria = criteria.filter((item) => item.status === 'Critical')
+  const legacyNoNotes = Boolean(review.criticalErrors?.noNotes)
+  const legacyVoucherReference = Boolean(review.criticalErrors?.voucherReference)
   const criticalErrors = {
-    noNotes: Boolean(review.criticalErrors?.noNotes),
-    voucherReference: Boolean(review.criticalErrors?.voucherReference),
+    noNotes: legacyNoNotes || criticalCriteria.some((item) => item.criticalReason === 'No Notes'),
+    voucherReference: legacyVoucherReference || criticalCriteria.some((item) => item.criticalReason === 'Voucher # in Notes / Slack / Macro'),
   }
-  const hasCriticalError = review.qaType !== 'Groups' && (criticalErrors.noNotes || criticalErrors.voucherReference)
-  if (hasCriticalError) finalScore = 0
+  const hasCriticalError = review.qaType !== 'Groups' && (criticalCriteria.length > 0 || criticalErrors.noNotes || criticalErrors.voucherReference)
+  if (hasCriticalError) {
+    finalScore = 0
+    criteria = criteria.map((item) => ({ ...item, autoPoints: 0 }))
+  }
   const result = !hasCriticalError && finalScore >= kpiTarget ? 'PASS' : 'FAIL'
   const now = new Date().toISOString()
   return {
@@ -217,9 +228,14 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
     result,
     markdowns,
     issueSummary: [
-      ...criteria.filter((item) => item.customNote).map((item) => `${item.name} - ${item.status} - ${item.customNote}`),
-      ...(criticalErrors.noNotes ? ['CRITICAL: No Notes — automatic 0% QA / FAIL'] : []),
-      ...(criticalErrors.voucherReference ? ['CRITICAL: Voucher # in Notes / Slack / Macro — automatic 0% QA / FAIL; escalate with IT# and Agent Name'] : []),
+      ...criteria
+        .filter((item) => item.status === 'Critical')
+        .map((item) => `CRITICAL: ${item.name} — ${item.criticalReason}${item.customNote ? ` — ${item.customNote}` : ''} — automatic 0% QA / FAIL`),
+      ...criteria
+        .filter((item) => item.status !== 'Critical' && item.customNote)
+        .map((item) => `${item.name} - ${item.status} - ${item.customNote}`),
+      ...(legacyNoNotes && !criticalCriteria.some((item) => item.criticalReason === 'No Notes') ? ['CRITICAL: No Notes — automatic 0% QA / FAIL'] : []),
+      ...(legacyVoucherReference && !criticalCriteria.some((item) => item.criticalReason === 'Voucher # in Notes / Slack / Macro') ? ['CRITICAL: Voucher # in Notes / Slack / Macro — automatic 0% QA / FAIL; escalate with IT# and Agent Name'] : []),
     ].join(' | '),
     callLength: review.callLength.trim(),
     callDate: dateOnly(review.callDate),

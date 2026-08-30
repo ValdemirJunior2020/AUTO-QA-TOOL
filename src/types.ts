@@ -1,6 +1,6 @@
 export type UserRole = 'admin' | 'evaluator' | 'viewer'
 export type QaType = 'CS' | 'Groups' | 'Sales'
-export type CriterionStatus = '✓ Followed' | '✕ Markdown' | 'N/A' | 'Partial' | ''
+export type CriterionStatus = '✓ Followed' | '✕ Markdown' | 'N/A' | 'Partial' | 'Critical' | ''
 
 export interface UserPermissions {
   canSubmitReviews: boolean
@@ -58,6 +58,7 @@ export interface CriterionAnswer extends CriterionDefinition {
   partialPoints: number
   autoPoints: number
   customNote: string
+  criticalReason?: string
 }
 
 export interface ReviewDraft {

@@ -139,6 +139,7 @@ export function createCriterionAnswers(settings: AppSettings, qaType: QaType): C
     partialPoints: criterion.points / 2,
     autoPoints: 0,
     customNote: '',
+    criticalReason: '',
   }))
 }
 

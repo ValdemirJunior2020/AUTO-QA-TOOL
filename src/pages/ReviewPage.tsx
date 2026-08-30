@@ -32,6 +32,28 @@ function normalizeCallId(value: string): string {
   return cleaned
 }
 
+function isCriticalCriterion(name: string): boolean {
+  const normalized = name.toLowerCase()
+  return normalized.includes('matrix compliance') || normalized.includes('documentation quality')
+}
+
+function criticalReasonsFor(name: string): string[] {
+  const normalized = name.toLowerCase()
+  if (normalized.includes('documentation quality')) {
+    return [
+      'No Notes',
+      'Voucher # in Notes / Slack / Macro',
+      'Other Documentation Critical',
+    ]
+  }
+  return [
+    'Required Matrix process was not followed',
+    'Required escalation path was not followed',
+    'Required Matrix tool/process was used incorrectly',
+    'Other Matrix Critical',
+  ]
+}
+
 function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings): ValidationState {
   const errors: string[] = []
   const fieldErrors: Record<string, string> = {}
@@ -77,6 +99,14 @@ function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings
     ) {
       add(`note-${index}`, `Add a clear note for criterion ${criterion.number} because ${criterion.status} was selected.`)
     }
+
+    if (criterion.status === 'Critical') {
+      if (!isCriticalCriterion(criterion.name)) {
+        add(`criterion-${index}`, `Critical can only be selected for Matrix Compliance or Documentation Quality.`)
+      } else if (!String(criterion.criticalReason || '').trim()) {
+        add(`criterion-${index}`, `Select a Critical reason for criterion ${criterion.number}: ${criterion.name}.`)
+      }
+    }
   })
 
   return { errors, fieldErrors }
@@ -87,6 +117,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
   const [validation, setValidation] = useState<ValidationState>({ errors: [], fieldErrors: {} })
   const [showChecklist, setShowChecklist] = useState(false)
   const [draftRestored, setDraftRestored] = useState(false)
+  const [criticalModal, setCriticalModal] = useState<{ index: number; reason: string; note: string } | null>(null)
   const draftKey = `qa-review-draft:${user.email}:${initialQaType.toLowerCase()}`
 
   useEffect(() => {
@@ -123,7 +154,11 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     [review.criteria],
   )
   const kpi = review.qaType === 'Groups' ? settings.rules.groupsKpi : review.qaType === 'Sales' ? settings.rules.salesKpi : settings.rules.csKpi
-  const hasCriticalError = review.qaType !== 'Groups' && Boolean(review.criticalErrors?.noNotes || review.criticalErrors?.voucherReference)
+  const hasCriticalError = review.qaType !== 'Groups' && Boolean(
+    review.criteria.some((criterion) => criterion.status === 'Critical') ||
+    review.criticalErrors?.noNotes ||
+    review.criticalErrors?.voucherReference
+  )
   const displayedScore = hasCriticalError ? 0 : score
   const result = !hasCriticalError && score >= kpi ? 'PASS' : 'FAIL'
   const markdowns = review.criteria.filter((criterion) => criterion.status === '✕ Markdown').length
@@ -160,6 +195,10 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
         // by validation. Only clear an old note when the status is reset to blank.
         if (patch.status !== undefined && patch.status === '') {
           updated.customNote = ''
+          updated.criticalReason = ''
+        }
+        if (patch.status !== undefined && patch.status !== 'Critical') {
+          updated.criticalReason = ''
         }
 
         updated.partialPoints = updated.points / 2
@@ -178,7 +217,8 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
         patch.customNote !== undefined ||
         (patch.status !== undefined &&
           patch.status !== '✕ Markdown' &&
-          patch.status !== 'Partial')
+          patch.status !== 'Partial' &&
+          patch.status !== 'Critical')
       ) {
         delete next[`note-${index}`]
       }
@@ -283,7 +323,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
             <p>HotelPlanner Quality Assurance</p>
             <h1>QA Scorer</h1>
           </div>
-          <p className="qa-instruction">Select ✓ / ✕ / N/A / Partial for every criterion.</p>
+          <p className="qa-instruction">Select ✓ / ✕ / N/A / Partial for every criterion. Matrix and Documentation also allow Critical.</p>
         </div>
 
         <div className="form-score-layout">
@@ -439,16 +479,33 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                   <td data-label="Select" className={validation.fieldErrors[`criterion-${index}`] ? 'cell-invalid' : ''}>
                     <select
                       value={criterion.status}
-                      onChange={(event) => updateCriterion(index, { status: event.target.value as CriterionStatus })}
+                      onChange={(event) => {
+                        const nextStatus = event.target.value as CriterionStatus
+                        if (nextStatus === 'Critical') {
+                          setCriticalModal({ index, reason: criterion.criticalReason || '', note: criterion.customNote || '' })
+                          return
+                        }
+                        updateCriterion(index, { status: nextStatus })
+                      }}
                       disabled={!user.permissions.canEditCriteriaSelections}
                     >
                       <option value="">Select</option>
-                      {settings.statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+                      {settings.statusOptions.filter((status) => status !== 'Critical').map((status) => <option key={status} value={status}>{status}</option>)}
+                      {review.qaType !== 'Groups' && isCriticalCriterion(criterion.name) && <option value="Critical">Critical</option>}
                     </select>
+                    {criterion.status === 'Critical' && criterion.criticalReason && (
+                      <button
+                        type="button"
+                        className="critical-reason-button"
+                        onClick={() => setCriticalModal({ index, reason: criterion.criticalReason || '', note: criterion.customNote || '' })}
+                      >
+                        Reason: {criterion.criticalReason}
+                      </button>
+                    )}
                     {validation.fieldErrors[`criterion-${index}`] && <small>{validation.fieldErrors[`criterion-${index}`]}</small>}
                   </td>
                   <td data-label="Partial Points">{criterion.status === 'Partial' ? criterion.partialPoints : ''}</td>
-                  <td data-label="Auto Points"><strong>{criterion.autoPoints || (criterion.status ? 0 : '')}</strong></td>
+                  <td data-label="Auto Points"><strong>{hasCriticalError ? (criterion.status ? 0 : '') : (criterion.autoPoints || (criterion.status ? 0 : ''))}</strong></td>
                   <td data-label="Notes / Issue Found"><p>{criterion.notes}</p></td>
                   <td data-label="Custom Notes" className={validation.fieldErrors[`note-${index}`] ? 'cell-invalid' : ''}>
                     {criterion.status ? (
@@ -459,6 +516,8 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                           placeholder={
                             criterion.status === '✕ Markdown' || criterion.status === 'Partial'
                               ? 'Required: explain the issue clearly…'
+                              : criterion.status === 'Critical'
+                                ? 'Optional coaching comments. The Critical reason is saved above…'
                               : criterion.status === '✓ Followed'
                                 ? 'Optional: add a positive note or extra context…'
                                 : 'Optional note…'
@@ -480,32 +539,12 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
           </table>
         </div>
 
-        {review.qaType !== 'Groups' && (
+        {hasCriticalError && (
           <section className="critical-errors-panel">
-            <div className="panel-heading wrap-heading">
-              <div>
-                <p className="eyebrow">Critical errors</p>
-                <h3>Documentation Criticals</h3>
-                <p className="muted">Barbara confirmed either critical makes the entire QA 0% and FAIL. Documentation can still be scored Partial when no critical applies.</p>
-              </div>
+            <div className="validation-banner">
+              <strong>CRITICAL FAIL — Final QA is 0% / FAIL.</strong>
+              <span>All other categories remain editable for scoring selections and coaching comments, but their saved points are zeroed for this QA.</span>
             </div>
-            <label className="toggle-row danger-toggle">
-              <input
-                type="checkbox"
-                checked={Boolean(review.criticalErrors?.noNotes)}
-                onChange={(event) => updateField('criticalErrors', { ...(review.criticalErrors || { noNotes: false, voucherReference: false }), noNotes: event.target.checked })}
-              />
-              <span><strong>No Notes</strong><small>Automatic 0% QA / FAIL.</small></span>
-            </label>
-            <label className="toggle-row danger-toggle">
-              <input
-                type="checkbox"
-                checked={Boolean(review.criticalErrors?.voucherReference)}
-                onChange={(event) => updateField('criticalErrors', { ...(review.criticalErrors || { noNotes: false, voucherReference: false }), voucherReference: event.target.checked })}
-              />
-              <span><strong>Voucher # in Notes / Slack / Macro</strong><small>Automatic 0% QA / FAIL and should be escalated with IT# and Agent Name.</small></span>
-            </label>
-            {hasCriticalError && <div className="validation-banner"><strong>Critical fail active:</strong><span>This review will save as 0% / FAIL.</span></div>}
           </section>
         )}
 
@@ -532,6 +571,57 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
           </button>
         </div>
       </section>
+
+      {criticalModal && review.criteria[criticalModal.index] && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card critical-modal" role="dialog" aria-modal="true" aria-labelledby="critical-title">
+            <p className="eyebrow">Critical QA</p>
+            <h2 id="critical-title">Select the reason for this Critical</h2>
+            <p className="muted"><strong>{review.criteria[criticalModal.index].name}</strong></p>
+            <p className="critical-warning-copy">Choosing Critical makes the entire QA 0% / FAIL. You can still complete every category and add coaching comments.</p>
+            <label className="field">
+              <span>Critical Reason</span>
+              <select
+                value={criticalModal.reason}
+                onChange={(event) => setCriticalModal((current) => current ? { ...current, reason: event.target.value } : current)}
+                autoFocus
+              >
+                <option value="">Select a reason</option>
+                {criticalReasonsFor(review.criteria[criticalModal.index].name).map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Coaching Comment (Optional)</span>
+              <textarea
+                value={criticalModal.note}
+                onChange={(event) => setCriticalModal((current) => current ? { ...current, note: event.target.value } : current)}
+                placeholder="Add details the Call Center team can use for coaching…"
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setCriticalModal(null)}>Cancel</button>
+              <button
+                type="button"
+                className="primary-button danger-button"
+                onClick={() => {
+                  if (!criticalModal.reason.trim()) {
+                    window.alert('Please select a Critical reason.')
+                    return
+                  }
+                  updateCriterion(criticalModal.index, {
+                    status: 'Critical',
+                    criticalReason: criticalModal.reason,
+                    customNote: criticalModal.note,
+                  })
+                  setCriticalModal(null)
+                }}
+              >
+                Apply Critical
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showChecklist && (
         <div className="modal-backdrop" role="presentation">
