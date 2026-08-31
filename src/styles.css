@@ -4213,3 +4213,7 @@ h1 { letter-spacing: -0.035em; }
 }
 .danger-button { background: #b91c1c !important; }
 .danger-button:hover { background: #991b1b !important; }
+.primary-button.danger-button {
+  color: #ffffff !important;
+  font-weight: 900 !important;
+}
