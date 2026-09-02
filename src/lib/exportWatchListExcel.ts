@@ -14,6 +14,8 @@ export async function exportWatchListExcel(agents: WatchListAgent[], reviews: Re
     { header: 'Agent Name', key: 'agentName', width: 34 },
     { header: 'Trainer', key: 'trainer', width: 24 },
     { header: 'Wave', key: 'wave', width: 14 },
+    { header: 'Date Added to Watch List', key: 'dateAdded', width: 22 },
+    { header: 'QA Review Dates Since Added', key: 'reviewDatesSinceAdded', width: 42 },
     { header: 'Start Date', key: 'startDate', width: 14 },
     { header: 'End Date', key: 'endDate', width: 14 },
     { header: 'Employee Status', key: 'employeeStatus', width: 16 },
@@ -40,8 +42,23 @@ export async function exportWatchListExcel(agents: WatchListAgent[], reviews: Re
 
   agents.forEach((agent) => {
     const metrics = getWatchListMetrics(agent, reviews, agents)
+    const addedDate = agent.createdAt ? new Date(agent.createdAt) : null
+    const addedDay = addedDate && !Number.isNaN(addedDate.getTime())
+      ? new Date(addedDate.getFullYear(), addedDate.getMonth(), addedDate.getDate()).getTime()
+      : Number.NaN
+    const reviewsSinceAdded = [...metrics.matchedReviews]
+      .filter((review) => {
+        if (Number.isNaN(addedDay)) return true
+        const reviewDate = new Date(review.reviewDate || review.savedTimestamp)
+        if (Number.isNaN(reviewDate.getTime())) return true
+        const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate()).getTime()
+        return reviewDay >= addedDay
+      })
+      .sort((a, b) => new Date(a.reviewDate || a.savedTimestamp).getTime() - new Date(b.reviewDate || b.savedTimestamp).getTime())
     const row = sheet.addRow({
       ...agent,
+      dateAdded: agent.createdAt,
+      reviewDatesSinceAdded: reviewsSinceAdded.map((review) => `${review.reviewDate || review.savedTimestamp} | ${review.evaluator || 'QA'} | ${Number(review.finalScore || 0).toFixed(1)}%`).join('\n'),
       qaAverage: metrics.averageScore === null ? '' : metrics.averageScore / 100,
       reviewCount: metrics.reviewCount,
       kpiStatus: metrics.kpiLabel,
@@ -60,7 +77,7 @@ export async function exportWatchListExcel(agents: WatchListAgent[], reviews: Re
     if (metrics.averageScore !== null) row.getCell('qaAverage').numFmt = '0.0%'
   })
 
-  sheet.autoFilter = { from: 'A1', to: 'U1' }
+  sheet.autoFilter = { from: 'A1', to: 'W1' }
   sheet.eachRow((row) => {
     row.eachCell((cell) => {
       cell.border = {

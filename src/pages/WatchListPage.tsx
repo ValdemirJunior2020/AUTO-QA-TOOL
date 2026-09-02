@@ -17,6 +17,30 @@ interface WatchListPageProps {
 
 type WatchFilter = 'Active' | 'History' | 'All'
 
+function formatWatchDate(value: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+}
+
+function getReviewsSinceAdded(agent: WatchListAgent, matchedReviews: ReviewRecord[]): ReviewRecord[] {
+  const addedDate = agent.createdAt ? new Date(agent.createdAt) : null
+  const addedDay = addedDate && !Number.isNaN(addedDate.getTime())
+    ? new Date(addedDate.getFullYear(), addedDate.getMonth(), addedDate.getDate()).getTime()
+    : Number.NaN
+
+  return [...matchedReviews]
+    .filter((review) => {
+      if (Number.isNaN(addedDay)) return true
+      const reviewDate = new Date(review.reviewDate || review.savedTimestamp)
+      if (Number.isNaN(reviewDate.getTime())) return true
+      const reviewDay = new Date(reviewDate.getFullYear(), reviewDate.getMonth(), reviewDate.getDate()).getTime()
+      return reviewDay >= addedDay
+    })
+    .sort((a, b) => new Date(b.reviewDate || b.savedTimestamp).getTime() - new Date(a.reviewDate || a.savedTimestamp).getTime())
+}
+
 const WATCH_LIST_CALL_CENTERS = [
   { value: 'Telus', label: 'Telus' },
   { value: 'WNS', label: 'WNS' },
@@ -162,12 +186,13 @@ export function WatchListPage({ user, agents, reviews, onSave, onSetStatus, onRe
           <table className="watch-table">
             <thead>
               <tr>
-                <th>Agent</th><th>Call Center</th><th>LOB</th><th>Trainer</th><th>Wave</th><th>Start</th><th>End</th><th>Employee Status</th><th>QA Avg</th><th>Reviews</th><th>KPI</th><th>Reason</th><th>Watch Status</th>{canManage && <th>Actions</th>}
+                <th>Agent</th><th>Call Center</th><th>LOB</th><th>Trainer</th><th>Wave</th><th>Date Added</th><th>QA Review Dates Since Added</th><th>Start</th><th>End</th><th>Employee Status</th><th>QA Avg</th><th>Reviews</th><th>KPI</th><th>Reason</th><th>Watch Status</th>{canManage && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
               {visibleAgents.map((agent) => {
                 const metrics = getWatchListMetrics(agent, reviews, agents)
+                const reviewsSinceAdded = getReviewsSinceAdded(agent, metrics.matchedReviews)
                 return (
                   <tr key={agent.id} className={`watch-row watch-row--${metrics.kpiBand} ${agent.watchStatus !== 'Active' ? 'watch-row--history' : ''}`}>
                     <td><strong>{agent.agentName}</strong>{canManage && onOpenPerformance && <button type="button" className="watch-history-link" onClick={() => onOpenPerformance(agent.agentName)}>View score history</button>}</td>
@@ -175,6 +200,19 @@ export function WatchListPage({ user, agents, reviews, onSave, onSetStatus, onRe
                     <td>{agent.lob || '—'}</td>
                     <td>{agent.trainer || '—'}</td>
                     <td>{agent.wave || '—'}</td>
+                    <td className="watch-date-added-cell"><strong>{formatWatchDate(agent.createdAt)}</strong><small>{agent.createdByName ? `Added by ${agent.createdByName}` : ''}</small></td>
+                    <td className="watch-review-dates-cell">
+                      {reviewsSinceAdded.length ? (
+                        <div className="watch-review-date-list">
+                          {reviewsSinceAdded.map((review) => (
+                            <div className="watch-review-date-item" key={review.id || `${review.rowNumber}-${review.reviewDate}`}>
+                              <strong>{formatWatchDate(review.reviewDate || review.savedTimestamp)}</strong>
+                              <span>{review.evaluator || 'QA'} · {Number(review.finalScore || 0).toFixed(1)}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <span className="muted">No review since added</span>}
+                    </td>
                     <td>{agent.startDate || '—'}</td>
                     <td>{agent.endDate || '—'}</td>
                     <td>{agent.employeeStatus || '—'}</td>

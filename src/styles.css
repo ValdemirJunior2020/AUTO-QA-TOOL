@@ -916,7 +916,7 @@ h1 { letter-spacing: -0.035em; }
 .watch-filter-buttons button.active { background: #24165f; color: #fff; }
 .watch-search { width: min(420px, 100%); border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px; background: #fff; }
 .watch-table-wrap { overflow-x: auto; }
-.watch-table { width: 100%; min-width: 1380px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.watch-table { width: 100%; min-width: 1680px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
 .watch-table th { position: sticky; top: 0; z-index: 1; padding: 11px 10px; background: #24165f; color: #fff; text-align: left; white-space: nowrap; }
 .watch-table th:first-child { border-radius: 10px 0 0 0; }
 .watch-table th:last-child { border-radius: 0 10px 0 0; }
@@ -927,6 +927,13 @@ h1 { letter-spacing: -0.035em; }
 .watch-row--none td { background: #f3f4f6; }
 .watch-row--history td { opacity: .72; }
 .watch-reason-cell { min-width: 180px; max-width: 260px; white-space: normal; }
+.watch-date-added-cell { min-width: 120px; white-space: nowrap; }
+.watch-date-added-cell small { display: block; margin-top: 4px; color: #6b7280; font-size: 10px; font-weight: 700; }
+.watch-review-dates-cell { min-width: 210px; max-width: 280px; }
+.watch-review-date-list { display: grid; gap: 6px; max-height: 150px; overflow-y: auto; padding-right: 4px; }
+.watch-review-date-item { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid rgba(36, 22, 95, .12); border-radius: 8px; background: rgba(255, 255, 255, .58); }
+.watch-review-date-item strong { white-space: nowrap; font-size: 11px; }
+.watch-review-date-item span { color: #586174; font-size: 10px; font-weight: 700; text-align: right; }
 .watch-kpi-pill, .watch-status-pill { display: inline-flex; padding: 5px 8px; border-radius: 999px; font-size: 10px; font-weight: 900; white-space: nowrap; }
 .watch-kpi-pill--danger { background: #b91c1c; color: #fff; }
 .watch-kpi-pill--warning { background: #f59e0b; color: #422006; }
