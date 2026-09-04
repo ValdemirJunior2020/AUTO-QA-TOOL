@@ -3,6 +3,18 @@ import type { AppSettings, AuthSession, CriterionAnswer, QaUser, ReviewRecord } 
 import { DEFAULT_SETTINGS } from '../data/defaults'
 import { BARBARA_EMAIL, OWNER_EMAIL, firestore, normalizeEmail } from './firebase'
 
+
+function isRetiredCallCenter(value: unknown): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+  return normalized === 'tep' || normalized === 'teleperformance'
+}
+
+function cleanCallCenters(values: unknown): string[] {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter((value) => value && !isRetiredCallCenter(value))
+}
+
 export interface MigrationResult {
   reviews: number
   users: number
@@ -181,7 +193,7 @@ function settingsFromSheet(sheet?: ExcelJS.Worksheet): AppSettings {
   }
   return {
     criteria: values.criteria || DEFAULT_SETTINGS.criteria,
-    callCenters: values.callCenters || DEFAULT_SETTINGS.callCenters,
+    callCenters: cleanCallCenters(values.callCenters || DEFAULT_SETTINGS.callCenters),
     statusOptions: values.statusOptions || DEFAULT_SETTINGS.statusOptions,
     rules: { ...DEFAULT_SETTINGS.rules, ...(values.rules || {}) },
   }
@@ -230,7 +242,7 @@ export async function importLegacyWorkbookToFirebase(
   let skippedRows = 0
   for (let row = 2; row <= reviewSheet.rowCount; row += 1) {
     const review = reviewFromRow(rowObject(reviewSheet, row), row)
-    if (review) reviews.push(review)
+    if (review && !isRetiredCallCenter(review.callCenter)) reviews.push(review)
     else skippedRows += 1
   }
 

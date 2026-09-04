@@ -21,7 +21,7 @@
 // - Kelly saves through an owner-installed edit trigger so the protected results tab stays locked.
 // - Evaluators: Junior / Barbara / Kelly. Each personal tab is locked to its evaluator name.
 // - C5 Evaluator is NOT cleared after saving.
-// - Call Center options: WNS, TEP, Concentrix, Buwelo-G, Buwelo-C, Telus.
+// - Call Center options: WNS, Concentrix, Buwelo-G, Buwelo-C, Telus.
 // - Call Center accepts lowercase/variations and normalizes automatically.
 // - Saves completed review into "Agents Reviewed".
 // - Column H is "Email Sent?"; checking it creates an A:CH snapshot in "emails sent details".
@@ -135,7 +135,6 @@ const QA_TYPE_OPTIONS = ["CS", "Groups"];
 
 const CALL_CENTER_OPTIONS = [
   "WNS",
-  "TEP",
   "Concentrix",
   "Buwelo-G",
   "Buwelo-C",
@@ -1993,7 +1992,7 @@ function fixCallCenterDropdown(showAlert = true) {
   if (showAlert) {
     showDone_("Call Center dropdown fixed.");
     SpreadsheetApp.getUi().alert(
-      "Call Center dropdown fixed. Allowed values: WNS, TEP, Concentrix, Buwelo-G, Buwelo-C, Telus."
+      "Call Center dropdown fixed. Allowed values: WNS, Concentrix, Buwelo-G, Buwelo-C, Telus."
     );
   }
 }
@@ -2406,7 +2405,7 @@ function validateReview_(reviewData, sheet) {
 
   const validCallCenters = CALL_CENTER_OPTIONS.map(option => option.toLowerCase());
   if (!validCallCenters.includes(String(reviewData.callCenter).toLowerCase())) {
-    return "Please use one of these Call Centers: WNS, TEP, Concentrix, Buwelo-G, Buwelo-C, Telus.";
+    return "Please use one of these Call Centers: WNS, Concentrix, Buwelo-G, Buwelo-C, Telus.";
   }
 
   const statuses = sheet
@@ -3208,7 +3207,6 @@ function normalizeCallCenter_(value) {
 
   const map = {
     "wns": "WNS",
-    "tep": "TEP",
     "concentrix": "Concentrix",
     "telus": "Telus",
 

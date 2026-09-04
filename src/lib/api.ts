@@ -77,6 +77,19 @@ export function getFriendlyApiError(error: unknown): string {
 
 export function requiresNewLogin(_error: unknown): boolean { return false }
 
+function isFormerTepCallCenter(value: unknown): boolean {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+  return normalized === 'tep' || normalized === 'teleperformance'
+}
+
+function removeFormerTepCenters(values: unknown): string[] {
+  const source = Array.isArray(values) ? values : []
+  return source.map((value) => String(value || '').trim()).filter((value) => value && !isFormerTepCallCenter(value))
+}
+
 const fullAdminPermissions = {
   canSubmitReviews: true,
   canViewHistory: true,
@@ -137,6 +150,7 @@ export async function bootstrap(session: AuthSession): Promise<BootstrapResponse
     const settings: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...storedSettings,
+      callCenters: removeFormerTepCenters(storedSettings.callCenters || DEFAULT_SETTINGS.callCenters),
       criteria: { ...DEFAULT_SETTINGS.criteria, ...(storedSettings.criteria || {}) },
       rules: { ...DEFAULT_SETTINGS.rules, ...(storedSettings.rules || {}) },
     }
@@ -157,7 +171,9 @@ export async function bootstrap(session: AuthSession): Promise<BootstrapResponse
 export async function fetchReviews(_session: AuthSession, _refresh = false): Promise<ReviewRecord[]> {
   try {
     const snapshot = await firestore.collection('reviews').orderBy('savedTimestamp', 'desc').get()
-    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as ReviewRecord))
+    return snapshot.docs
+      .map((doc: any) => ({ id: doc.id, ...doc.data() } as ReviewRecord))
+      .filter((review: ReviewRecord) => !isFormerTepCallCenter(review.callCenter))
   } catch (error: any) {
     // During first setup, an empty collection can be read without an index issue.
     throw friendlyFirebaseError(error)
@@ -169,6 +185,7 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
   if (!review.agentStartDate) throw new Error('Add the agent start date.')
   if (!review.agentName.trim()) throw new Error('Add the agent name.')
   if (!review.callCenter.trim()) throw new Error('Add or choose a call center.')
+  if (isFormerTepCallCenter(review.callCenter)) throw new Error('TEP / Teleperformance is no longer an available call center.')
   if (settings.rules.callIdRequired && !review.callId.trim()) throw new Error('Add the Call ID.')
   if (settings.rules.confirmationRequired && review.confirmationNumber.trim().length < 2) throw new Error('Add an itinerary, confirmation number, reservation number, or booking reference.')
   if (!review.callLength.trim()) throw new Error('Add the call length.')
@@ -346,9 +363,10 @@ export async function setUserBlocked(session: AuthSession, email: string, blocke
 export async function saveSettings(session: AuthSession, settings: AppSettings): Promise<ApiResponse<AppSettings>> {
   try {
     if (!ADMIN_EMAILS.has(normalizeEmail(session.email))) throw new Error('Only an administrator can change QA settings.')
-    await firestore.collection('settings').doc('main').set({ ...settings, updatedAt: new Date().toISOString(), updatedBy: normalizeEmail(session.email) })
+    const cleanedSettings = { ...settings, callCenters: removeFormerTepCenters(settings.callCenters) }
+    await firestore.collection('settings').doc('main').set({ ...cleanedSettings, updatedAt: new Date().toISOString(), updatedBy: normalizeEmail(session.email) })
     await addAudit('SETTINGS UPDATED', session, '', {})
-    return { success: true, message: 'QA settings were saved to Firebase.', settings }
+    return { success: true, message: 'QA settings were saved to Firebase.', settings: cleanedSettings }
   } catch (error) { throw friendlyFirebaseError(error) }
 }
 
@@ -365,6 +383,42 @@ async function addAudit(action: string, session: AuthSession, targetEmail: strin
   try {
     await firestore.collection('auditLogs').add({ action, actorEmail: normalizeEmail(session.email), actorName: session.name, targetEmail: normalizeEmail(targetEmail), details, createdAt: new Date().toISOString() })
   } catch (error) { console.warn('Audit log write failed.', error) }
+}
+
+
+export async function purgeFormerTepData(session: AuthSession): Promise<{ reviewsDeleted: number; watchListDeleted: number }> {
+  const actor = normalizeEmail(session.email)
+  if (actor !== 'infojr.83@gmail.com') return { reviewsDeleted: 0, watchListDeleted: 0 }
+
+  const cleanupRef = firestore.collection('meta').doc('retired-call-center-cleanup')
+  const cleanupSnap = await cleanupRef.get()
+  if (cleanupSnap.exists && cleanupSnap.data()?.completed === true) return { reviewsDeleted: 0, watchListDeleted: 0 }
+
+  const [reviewsSnap, watchListSnap, settingsSnap] = await Promise.all([
+    firestore.collection('reviews').get(),
+    firestore.collection('watchListAgents').get(),
+    firestore.collection('settings').doc('main').get(),
+  ])
+
+  const reviewDocs = reviewsSnap.docs.filter((doc: any) => isFormerTepCallCenter(doc.data()?.callCenter))
+  const watchDocs = watchListSnap.docs.filter((doc: any) => isFormerTepCallCenter(doc.data()?.callCenter))
+  const refs = [...reviewDocs, ...watchDocs].map((doc: any) => doc.ref)
+
+  for (let start = 0; start < refs.length; start += 400) {
+    const batch = firestore.batch()
+    refs.slice(start, start + 400).forEach((ref: any) => batch.delete(ref))
+    await batch.commit()
+  }
+
+  if (settingsSnap.exists) {
+    const stored = settingsSnap.data() || {}
+    const cleanedCenters = removeFormerTepCenters(stored.callCenters || [])
+    await settingsSnap.ref.set({ callCenters: cleanedCenters, updatedAt: new Date().toISOString(), updatedBy: actor }, { merge: true })
+  }
+
+  await cleanupRef.set({ completed: true, completedAt: new Date().toISOString(), completedBy: actor, reviewsDeleted: reviewDocs.length, watchListDeleted: watchDocs.length }, { merge: true })
+
+  return { reviewsDeleted: reviewDocs.length, watchListDeleted: watchDocs.length }
 }
 
 export async function updatePresence(session: AuthSession, currentPage: string, sessionId: string): Promise<PresenceUser | null> {
@@ -448,6 +502,7 @@ export async function fetchWatchListAgents(_session: AuthSession): Promise<Watch
     const snapshot = await firestore.collection('watchListAgents').get()
     return snapshot.docs
       .map((doc: any) => sanitizeWatchListAgent(doc.id, doc.data()))
+      .filter((agent: WatchListAgent) => !isFormerTepCallCenter(agent.callCenter))
       .sort((a: WatchListAgent, b: WatchListAgent) => {
         if (a.watchStatus === 'Active' && b.watchStatus !== 'Active') return -1
         if (a.watchStatus !== 'Active' && b.watchStatus === 'Active') return 1
@@ -493,6 +548,7 @@ export async function saveWatchListAgent(session: AuthSession, input: WatchListA
     assertWatchListAdmin(session)
     if (!input.agentName.trim()) throw new Error('Agent name is required.')
     if (!input.callCenter.trim()) throw new Error('Call center is required.')
+    if (isFormerTepCallCenter(input.callCenter)) throw new Error('TEP / Teleperformance is no longer an available call center.')
     if (!input.trainer.trim()) throw new Error('Trainer name is required.')
     if (!input.wave.trim()) throw new Error('Wave is required.')
 

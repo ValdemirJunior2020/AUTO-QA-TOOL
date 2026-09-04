@@ -112,7 +112,7 @@ export const DEFAULT_CRITERIA: CriteriaSettings = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   criteria: DEFAULT_CRITERIA,
-  callCenters: ['WNS', 'TEP', 'Concentrix', 'Buwelo-G', 'Buwelo-C', 'Telus', 'AI agents'],
+  callCenters: ['WNS', 'Concentrix', 'Buwelo-G', 'Buwelo-C', 'Telus', 'AI agents'],
   statusOptions: ['✓ Followed', '✕ Markdown', 'N/A', 'Partial'],
   rules: {
     confirmationRequired: true,

@@ -47,7 +47,6 @@ const WATCH_LIST_CALL_CENTERS = [
   { value: 'Concentrix', label: 'Concentrix (CNX)' },
   { value: 'Buwelo-C', label: 'Buwelo-C' },
   { value: 'Buwelo-G', label: 'Buwelo-G' },
-  { value: 'TEP', label: 'TEP' },
 ]
 
 const EMPTY_FORM: WatchListAgentInput = {

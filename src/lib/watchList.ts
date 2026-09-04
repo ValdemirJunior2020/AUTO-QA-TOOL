@@ -68,8 +68,6 @@ export function normalizeCallCenter(value: string): string {
   const aliases: Record<string, string> = {
     cnx: 'concentrix',
     concentrix: 'concentrix',
-    tep: 'tep',
-    teleperformance: 'tep',
     telus: 'telus',
     wns: 'wns',
     buweloc: 'buweloc',

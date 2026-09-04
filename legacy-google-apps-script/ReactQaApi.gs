@@ -1119,7 +1119,7 @@ function qaAppDefaultSettings_() {
         { number: 8, name: "Following Process and Closing Call", points: 15, notes: "Agent recaps details, gives the email and hotel response expectations, provides request credentials, offers more help, thanks the guest, and lets the guest disconnect first." }
       ]
     },
-    callCenters: ["WNS", "TEP", "Concentrix", "Buwelo-G", "Buwelo-C", "Telus"],
+    callCenters: ["WNS", "Concentrix", "Buwelo-G", "Buwelo-C", "Telus"],
     statusOptions: ["✓ Followed", "✕ Markdown", "N/A", "Partial"],
     rules: {
       confirmationRequired: true,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { GoogleSignIn } from './components/GoogleSignIn'
 import { Shell, type AppPage } from './components/Shell'
 import { DEFAULT_SETTINGS } from './data/defaults'
-import { bootstrap, createQaBackup, fetchReviews, fetchWatchListAgents, getPresence, markReviewEmailSent, removePresence, restoreLatestQaBackup, saveReview, saveSettings, saveUser, saveWatchListAgent, seedStarterWatchList, setUserBlocked, setWatchListAgentStatus, updatePresence, type PresenceUser } from './lib/api'
+import { bootstrap, createQaBackup, fetchReviews, fetchWatchListAgents, getPresence, markReviewEmailSent, removePresence, restoreLatestQaBackup, purgeFormerTepData, saveReview, saveSettings, saveUser, saveWatchListAgent, seedStarterWatchList, setUserBlocked, setWatchListAgentStatus, updatePresence, type PresenceUser } from './lib/api'
 import { signOutFirebase, waitForFirebaseSession } from './lib/auth'
 import { AdminPage } from './pages/AdminPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
@@ -171,6 +171,14 @@ export default function App() {
     setAuthError('')
     try {
       const boot = await bootstrap(activeSession)
+      setLoadingPercent(42)
+      if (activeSession.email.trim().toLowerCase() === 'infojr.83@gmail.com') {
+        try {
+          await purgeFormerTepData(activeSession)
+        } catch (error) {
+          console.warn('Former TEP data could not be purged yet. It will remain hidden until Firebase delete rules are deployed.', error)
+        }
+      }
       setLoadingPercent(55)
       const reviewRows = await fetchReviews(activeSession)
       setLoadingPercent(72)
