@@ -196,18 +196,21 @@ function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUs
   let markdowns = 0
   let criteria: CriterionAnswer[] = settings.criteria[review.qaType].map((definition, index) => {
     const answer = review.criteria.find((item) => Number(item.number) === Number(definition.number)) || review.criteria[index]
-    const status = answer?.status || ''
+    const selectedStatus = answer?.status || ''
     const normalizedName = definition.name.toLowerCase()
-    const criticalEligible = review.qaType !== 'Groups' && (normalizedName.includes('matrix compliance') || normalizedName.includes('documentation quality'))
-    const allowedStatus = settings.statusOptions.includes(status as any) || (status === 'Critical' && criticalEligible)
+    const isMatrixCompliance = normalizedName.includes('matrix compliance')
+    const criticalEligible = review.qaType !== 'Groups' && (isMatrixCompliance || normalizedName.includes('documentation quality'))
+    const matrixMarkdownBecomesCritical = review.qaType !== 'Groups' && isMatrixCompliance && selectedStatus === '✕ Markdown'
+    const status = matrixMarkdownBecomesCritical ? 'Critical' : selectedStatus
+    const allowedStatus = settings.statusOptions.includes(selectedStatus as any) || (status === 'Critical' && criticalEligible)
     if (!allowedStatus) throw new Error(`Select a status for criterion ${definition.number}: ${definition.name}.`)
     const customNote = String(answer?.customNote || '').trim()
-    const criticalReason = String(answer?.criticalReason || '').trim()
-    if (settings.rules.noteRequiredForMarkdownOrPartial && (status === '✕ Markdown' || status === 'Partial') && !customNote) throw new Error(`Add a clear note for criterion ${definition.number} because ${status} was selected.`)
+    const criticalReason = String(answer?.criticalReason || '').trim() || (matrixMarkdownBecomesCritical ? 'Required Matrix process was not followed' : '')
+    if (settings.rules.noteRequiredForMarkdownOrPartial && (selectedStatus === '✕ Markdown' || selectedStatus === 'Partial') && !customNote) throw new Error(`Add a clear note for criterion ${definition.number} because ${selectedStatus} was selected.`)
     if (status === 'Critical' && !criticalReason) throw new Error(`Select a Critical reason for criterion ${definition.number}: ${definition.name}.`)
     if (!actor.permissions.canEditCustomNotes && customNote) throw new Error('Your account cannot add custom notes.')
     const autoPoints = status === '✓ Followed' || status === 'N/A' ? definition.points : status === 'Partial' ? definition.points / 2 : 0
-    if (status === '✕ Markdown') markdowns += 1
+    if (selectedStatus === '✕ Markdown') markdowns += 1
     finalScore += autoPoints
     return { ...definition, status, partialPoints: status === 'Partial' ? definition.points / 2 : 0, autoPoints, customNote, criticalReason }
   })

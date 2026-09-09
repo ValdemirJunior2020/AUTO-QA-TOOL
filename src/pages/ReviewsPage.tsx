@@ -234,18 +234,28 @@ export function ReviewsPage({
           : 'Preparing team report',
       )
 
+      // Downloads are intentionally limited to reviews that have not been
+      // marked as Email/Sent yet. The table filters above remain unchanged.
       const filters: ReviewExcelFilters = {
         search,
         result,
         center,
         qaType,
         evaluator,
-        emailStatus,
+        emailStatus: 'NOT_SENT',
         dateFrom,
         dateTo,
       }
 
-      const downloadedReviews = [...filtered]
+      const downloadedReviews = filtered.filter(
+        (review) => !Boolean(review.emailSent),
+      )
+
+      if (!downloadedReviews.length) {
+        setDownloading(false)
+        setDownloadMessage('No reviews are waiting to be emailed. All matching reviews are already marked Sent.')
+        return
+      }
 
       try {
         const onProgress = (
@@ -417,7 +427,7 @@ export function ReviewsPage({
             >
               {downloading
                 ? 'Creating Excel…'
-                : 'Download Team Report (.xlsx)'}
+                : 'Download Team Report — Unsent Email (.xlsx)'}
             </button>
 
             <button
@@ -426,7 +436,7 @@ export function ReviewsPage({
               onClick={() => void downloadFilteredWorkbook('sheet')}
               disabled={filtered.length === 0 || downloading}
             >
-              {downloading ? 'Creating Excel…' : 'Download Full Google-Sheet Style'}
+              {downloading ? 'Creating Excel…' : 'Download Unsent — Full Google-Sheet Style'}
             </button>
 
             <button

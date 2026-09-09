@@ -37,6 +37,10 @@ function isCriticalCriterion(name: string): boolean {
   return normalized.includes('matrix compliance') || normalized.includes('documentation quality')
 }
 
+function isMatrixComplianceCriterion(name: string): boolean {
+  return name.toLowerCase().includes('matrix compliance')
+}
+
 function criticalReasonsFor(name: string): string[] {
   const normalized = name.toLowerCase()
   if (normalized.includes('documentation quality')) {
@@ -483,6 +487,13 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                         const nextStatus = event.target.value as CriterionStatus
                         if (nextStatus === 'Critical') {
                           setCriticalModal({ index, reason: criterion.criticalReason || '', note: criterion.customNote || '' })
+                          return
+                        }
+                        if (nextStatus === '✕ Markdown' && review.qaType !== 'Groups' && isMatrixComplianceCriterion(criterion.name)) {
+                          updateCriterion(index, {
+                            status: 'Critical',
+                            criticalReason: 'Required Matrix process was not followed',
+                          })
                           return
                         }
                         updateCriterion(index, { status: nextStatus })
