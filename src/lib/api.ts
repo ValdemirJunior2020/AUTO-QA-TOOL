@@ -153,6 +153,7 @@ export async function bootstrap(session: AuthSession): Promise<BootstrapResponse
       callCenters: removeFormerTepCenters(storedSettings.callCenters || DEFAULT_SETTINGS.callCenters),
       criteria: { ...DEFAULT_SETTINGS.criteria, ...(storedSettings.criteria || {}) },
       rules: { ...DEFAULT_SETTINGS.rules, ...(storedSettings.rules || {}) },
+      autoQa: { ...DEFAULT_SETTINGS.autoQa, ...(storedSettings.autoQa || {}) },
     }
 
     let users: QaUser[] = [user]
@@ -182,7 +183,8 @@ export async function fetchReviews(_session: AuthSession, _refresh = false): Pro
 
 function calculateReview(review: ReviewDraft, settings: AppSettings, actor: QaUser): ReviewRecord {
   if (!actor.permissions.canSubmitReviews) throw new Error('Your account cannot submit QA reviews.')
-  if (!review.agentStartDate) throw new Error('Add the agent start date.')
+  const aiAgentReview = review.callCenter.trim().toLowerCase() === 'ai agents'
+  if (!review.agentStartDate && !aiAgentReview) throw new Error('Add the agent start date.')
   if (!review.agentName.trim()) throw new Error('Add the agent name.')
   if (!review.callCenter.trim()) throw new Error('Add or choose a call center.')
   if (isFormerTepCallCenter(review.callCenter)) throw new Error('TEP / Teleperformance is no longer an available call center.')

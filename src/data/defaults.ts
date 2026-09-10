@@ -1,4 +1,5 @@
 import type { AppSettings, CriteriaSettings, CriterionAnswer, QaType, ReviewDraft } from '../types'
+import { DEFAULT_MATRIX_2026_TEXT } from './defaultMatrix2026'
 
 export const DEFAULT_CRITERIA: CriteriaSettings = {
   CS: [
@@ -114,6 +115,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
   criteria: DEFAULT_CRITERIA,
   callCenters: ['WNS', 'Concentrix', 'Buwelo-G', 'Buwelo-C', 'Telus', 'AI agents'],
   statusOptions: ['✓ Followed', '✕ Markdown', 'N/A', 'Partial'],
+  autoQa: {
+    enabled: true,
+    serviceUrl: 'http://127.0.0.1:8788',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaModel: 'qwen3:8b',
+    matrixText: DEFAULT_MATRIX_2026_TEXT,
+    matrixFileName: "Service Matrix's 2026.xlsx",
+    matrixUpdatedAt: '2026-09-10',
+    salesQaFormText: '',
+    salesQaFormFileName: '',
+    salesQaFormUpdatedAt: '',
+  },
   rules: {
     confirmationRequired: true,
     callIdRequired: true,

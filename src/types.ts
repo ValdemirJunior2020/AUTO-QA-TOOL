@@ -46,11 +46,25 @@ export interface AppRules {
   salesKpi: number
 }
 
+export interface AutoQaSettings {
+  enabled: boolean
+  serviceUrl: string
+  ollamaUrl: string
+  ollamaModel: string
+  matrixText: string
+  matrixFileName: string
+  matrixUpdatedAt: string
+  salesQaFormText: string
+  salesQaFormFileName: string
+  salesQaFormUpdatedAt: string
+}
+
 export interface AppSettings {
   criteria: CriteriaSettings
   callCenters: string[]
   statusOptions: Exclude<CriterionStatus, ''>[]
   rules: AppRules
+  autoQa: AutoQaSettings
 }
 
 export interface CriterionAnswer extends CriterionDefinition {

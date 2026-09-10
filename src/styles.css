@@ -4224,3 +4224,81 @@ h1 { letter-spacing: -0.035em; }
   color: #ffffff !important;
   font-weight: 900 !important;
 }
+/* Local Auto QA */
+.autoqa-review-panel {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border-color, #d7dde5);
+  border-radius: 16px;
+  padding: 18px;
+  background: var(--panel-bg, rgba(255, 255, 255, 0.72));
+  margin-top: 8px;
+}
+
+.autoqa-review-heading,
+.autoqa-actions,
+.autoqa-review-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.autoqa-review-heading {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.autoqa-review-heading > div {
+  display: block;
+}
+
+.autoqa-review-heading h3 { margin: 2px 0 4px; }
+.autoqa-review-heading p { margin: 0; }
+
+.autoqa-input-grid,
+.autoqa-upload-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, .7fr) minmax(320px, 1.3fr);
+  gap: 14px;
+}
+
+.autoqa-documentation-field textarea { min-height: 190px; }
+.autoqa-actions { flex-wrap: wrap; margin-top: 14px; }
+
+.service-status {
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  opacity: .78;
+}
+.service-status.online { color: #15803d; }
+.service-status.offline { color: #b91c1c; }
+
+.autoqa-evidence {
+  margin-top: 9px;
+  border: 1px solid var(--border-color, #d7dde5);
+  border-radius: 10px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+.autoqa-evidence.review-me { border-color: #d97706; }
+.autoqa-evidence summary { cursor: pointer; font-weight: 700; }
+.autoqa-evidence-body { padding-top: 7px; }
+.autoqa-evidence-body p { margin: 5px 0; line-height: 1.4; }
+
+.autoqa-upload-grid { margin-top: 18px; }
+.autoqa-upload-card {
+  border: 1px solid var(--border-color, #d7dde5);
+  border-radius: 14px;
+  padding: 16px;
+}
+.autoqa-upload-card h3 { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .autoqa-input-grid,
+  .autoqa-upload-grid { grid-template-columns: 1fr; }
+  .autoqa-review-heading { flex-direction: column; }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings, CriterionDefinition, QaType, QaUser, UserRole } from '../types'
 import { ADMIN_EMAILS, OWNER_EMAIL, SUPER_ADMIN_EMAILS, normalizeEmail } from '../lib/firebase'
+import { tryExtractSalesCriteria, workbookToQaText } from '../lib/autoQa'
 const RETIRED_USER_EMAILS = new Set(['barbara.kalchik@hotelplanner.com'])
 
 interface AdminPageProps {
@@ -44,7 +45,7 @@ export function AdminPage({
   onImportLegacyWorkbook,
   busy,
 }: AdminPageProps) {
-  const [section, setSection] = useState<'team' | 'criteria' | 'rules'>('team')
+  const [section, setSection] = useState<'team' | 'criteria' | 'rules' | 'autoqa'>('team')
   const [editingUser, setEditingUser] = useState<QaUser | null>(null)
   const [draftSettings, setDraftSettings] = useState<AppSettings>(() => structuredClone(settings))
   const [newCenter, setNewCenter] = useState('')
@@ -52,6 +53,7 @@ export function AdminPage({
   const [editingCenterValue, setEditingCenterValue] = useState('')
   const [legacyFile, setLegacyFile] = useState<File | null>(null)
   const [migrationMessage, setMigrationMessage] = useState('')
+  const [autoQaMessage, setAutoQaMessage] = useState('')
 
   const visibleUsers = useMemo(() => {
     const seen = new Set<string>()
@@ -212,6 +214,51 @@ export function AdminPage({
     await onSaveSettings(draftSettings)
   }
 
+
+  const importMatrixFile = async (file: File | null) => {
+    if (!file) return
+    setAutoQaMessage('Reading Matrix…')
+    try {
+      const imported = await workbookToQaText(file)
+      setDraftSettings((current) => ({
+        ...current,
+        autoQa: {
+          ...current.autoQa,
+          matrixText: imported.text,
+          matrixFileName: imported.fileName,
+          matrixUpdatedAt: new Date().toISOString(),
+        },
+      }))
+      setAutoQaMessage(`Loaded ${imported.fileName} (${imported.sheets.join(', ')}). Click Save Auto QA Settings.`)
+    } catch (error) {
+      setAutoQaMessage(error instanceof Error ? error.message : 'Could not read the Matrix workbook.')
+    }
+  }
+
+  const importSalesQaForm = async (file: File | null) => {
+    if (!file) return
+    setAutoQaMessage('Reading Group Sales QA form…')
+    try {
+      const imported = await workbookToQaText(file)
+      const extracted = tryExtractSalesCriteria(imported.text)
+      setDraftSettings((current) => ({
+        ...current,
+        criteria: extracted.length ? { ...current.criteria, Sales: extracted } : current.criteria,
+        autoQa: {
+          ...current.autoQa,
+          salesQaFormText: imported.text,
+          salesQaFormFileName: imported.fileName,
+          salesQaFormUpdatedAt: new Date().toISOString(),
+        },
+      }))
+      setAutoQaMessage(extracted.length
+        ? `Loaded ${imported.fileName} and detected ${extracted.length} Sales criteria. Review them in Criteria, then save.`
+        : `Loaded ${imported.fileName}. The form is available to Auto QA; criteria were not auto-detected, so you can enter them in Criteria if needed.`)
+    } catch (error) {
+      setAutoQaMessage(error instanceof Error ? error.message : 'Could not read the Group Sales QA form.')
+    }
+  }
+
   const importLegacy = async () => {
     if (!legacyFile || busy) return
     if (!window.confirm(`Import ${legacyFile.name} into Firebase? Existing documents with the same Request ID / legacy row ID will be updated, not duplicated.`)) return
@@ -245,6 +292,7 @@ export function AdminPage({
         <button type="button" className={section === 'team' ? 'active' : ''} onClick={() => setSection('team')}>Team & Access</button>
         <button type="button" className={section === 'criteria' ? 'active' : ''} onClick={() => setSection('criteria')}>Criteria</button>
         <button type="button" className={section === 'rules' ? 'active' : ''} onClick={() => setSection('rules')}>Rules & Centers</button>
+        <button type="button" className={section === 'autoqa' ? 'active' : ''} onClick={() => setSection('autoqa')}>Auto QA</button>
       </div>
 
       {section === 'team' && (
@@ -393,6 +441,57 @@ export function AdminPage({
               </div>
             </div>
           ))}
+        </section>
+      )}
+
+      {section === 'autoqa' && (
+        <section className="panel autoqa-admin-panel">
+          <div className="panel-heading wrap-heading">
+            <div>
+              <p className="eyebrow">Local Auto QA</p>
+              <h2>Ollama, Matrix and Group Sales Form</h2>
+              <p className="muted">Runs through your local Auto QA companion service. No paid AI API key is required.</p>
+            </div>
+            <button type="button" className="primary-button" onClick={saveSettings} disabled={busy}>Save Auto QA Settings</button>
+          </div>
+
+          <div className="rule-grid">
+            <label className="toggle-row">
+              <input type="checkbox" checked={draftSettings.autoQa.enabled} onChange={(event) => setDraftSettings((current) => ({ ...current, autoQa: { ...current.autoQa, enabled: event.target.checked } }))} />
+              <span><strong>Enable Auto QA</strong><small>Manual QA remains available even when this is enabled.</small></span>
+            </label>
+            <label className="field">
+              <span>Ollama Model</span>
+              <input value={draftSettings.autoQa.ollamaModel} onChange={(event) => setDraftSettings((current) => ({ ...current, autoQa: { ...current.autoQa, ollamaModel: event.target.value } }))} />
+              <em>Default: qwen3:8b</em>
+            </label>
+            <label className="field">
+              <span>Ollama URL</span>
+              <input value={draftSettings.autoQa.ollamaUrl} onChange={(event) => setDraftSettings((current) => ({ ...current, autoQa: { ...current.autoQa, ollamaUrl: event.target.value } }))} />
+            </label>
+            <label className="field">
+              <span>Local Auto QA Service</span>
+              <input value={draftSettings.autoQa.serviceUrl} onChange={(event) => setDraftSettings((current) => ({ ...current, autoQa: { ...current.autoQa, serviceUrl: event.target.value } }))} />
+            </label>
+          </div>
+
+          <div className="autoqa-upload-grid">
+            <article className="autoqa-upload-card">
+              <h3>Service Matrix</h3>
+              <p className="muted">Current: <strong>{draftSettings.autoQa.matrixFileName || 'No Matrix uploaded'}</strong></p>
+              <p className="muted">Upload a new .xlsx whenever the Matrix changes. Auto QA will use the newest saved version.</p>
+              <input type="file" accept=".xlsx" disabled={busy} onChange={(event) => void importMatrixFile(event.target.files?.[0] || null)} />
+            </article>
+
+            <article className="autoqa-upload-card">
+              <h3>Group Sales QA Form</h3>
+              <p className="muted">Current: <strong>{draftSettings.autoQa.salesQaFormFileName || 'Not uploaded yet'}</strong></p>
+              <p className="muted">Upload Barbara's future Group Sales QA workbook here. If its criteria and points are recognizable, the Sales criteria will be filled automatically.</p>
+              <input type="file" accept=".xlsx" disabled={busy} onChange={(event) => void importSalesQaForm(event.target.files?.[0] || null)} />
+            </article>
+          </div>
+
+          {autoQaMessage && <div className="validation-banner"><span>{autoQaMessage}</span></div>}
         </section>
       )}
 
