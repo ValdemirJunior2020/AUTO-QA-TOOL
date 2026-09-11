@@ -15,6 +15,8 @@ export interface AutoQaCriterionResult {
 export interface AutoQaResult {
   transcript: string
   detectedItinerary: string
+  detectedEmail: string
+  detectedPhone: string
   detectedCallLength: string
   detectedCallDate: string
   overallConfidence: number
