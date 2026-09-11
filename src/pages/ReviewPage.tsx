@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ClipboardEvent } from 'react'
 import { createCriterionAnswers, createReviewDraft, localDateInput, pointsForStatus } from '../data/defaults'
 import type {
   AppSettings,
@@ -33,6 +33,19 @@ function normalizeCallId(value: string): string {
   return cleaned
 }
 
+function normalizePastedDate(value: string): string {
+  const text = value.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+  const match = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/)
+  if (!match) return ''
+  const month = Number(match[1])
+  const day = Number(match[2])
+  const year = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return ''
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function isCriticalCriterion(name: string): boolean {
   const normalized = name.toLowerCase()
   return normalized.includes('matrix compliance') || normalized.includes('documentation quality')
@@ -45,11 +58,7 @@ function isMatrixComplianceCriterion(name: string): boolean {
 function criticalReasonsFor(name: string): string[] {
   const normalized = name.toLowerCase()
   if (normalized.includes('documentation quality')) {
-    return [
-      'No Notes',
-      'Voucher # in Notes / Slack / Macro',
-      'Other Documentation Critical',
-    ]
+    return ['No Notes', 'Voucher # in Notes / Slack / Macro', 'Other Documentation Critical']
   }
   return [
     'Required Matrix process was not followed',
@@ -94,9 +103,7 @@ function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings
   }
 
   review.criteria.forEach((criterion, index) => {
-    if (!criterion.status) {
-      add(`criterion-${index}`, `Select a status for criterion ${criterion.number}: ${criterion.name}.`)
-    }
+    if (!criterion.status) add(`criterion-${index}`, `Select a status for criterion ${criterion.number}: ${criterion.name}.`)
 
     if (
       settings.rules.noteRequiredForMarkdownOrPartial &&
@@ -108,7 +115,7 @@ function validateReview(review: ReviewDraft, user: QaUser, settings: AppSettings
 
     if (criterion.status === 'Critical') {
       if (!isCriticalCriterion(criterion.name)) {
-        add(`criterion-${index}`, `Critical can only be selected for Matrix Compliance or Documentation Quality.`)
+        add(`criterion-${index}`, 'Critical can only be selected for Matrix Compliance or Documentation Quality.')
       } else if (!String(criterion.criticalReason || '').trim()) {
         add(`criterion-${index}`, `Select a Critical reason for criterion ${criterion.number}: ${criterion.name}.`)
       }
@@ -126,13 +133,19 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
   const [criticalModal, setCriticalModal] = useState<{ index: number; reason: string; note: string } | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [documentation, setDocumentation] = useState('')
+  const [documentationManual, setDocumentationManual] = useState(false)
   const [autoQaBusy, setAutoQaBusy] = useState(false)
   const [autoQaMessage, setAutoQaMessage] = useState('')
   const [autoQaTranscript, setAutoQaTranscript] = useState('')
+  const [showTranscript, setShowTranscript] = useState(false)
+  const [guestEmail, setGuestEmail] = useState('')
+  const [guestPhone, setGuestPhone] = useState('')
+  const [autoQaStage, setAutoQaStage] = useState<'idle' | 'details' | 'final'>('idle')
   const [autoQaEvidence, setAutoQaEvidence] = useState<Record<number, AutoQaCriterionResult>>({})
   const [autoQaServiceOnline, setAutoQaServiceOnline] = useState<boolean | null>(null)
   const [manualOverrides, setManualOverrides] = useState<Set<number>>(() => new Set())
   const draftKey = `qa-review-draft:${user.email}:${initialQaType.toLowerCase()}`
+  const isAiAgentReview = review.callCenter.trim().toLowerCase() === 'ai agents'
 
   useEffect(() => {
     try {
@@ -157,9 +170,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
   }, [draftKey, user.displayName, user.role])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      window.localStorage.setItem(draftKey, JSON.stringify(review))
-    }, 500)
+    const timer = window.setTimeout(() => window.localStorage.setItem(draftKey, JSON.stringify(review)), 500)
     return () => window.clearTimeout(timer)
   }, [draftKey, review])
 
@@ -172,7 +183,55 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     return () => { cancelled = true }
   }, [settings])
 
-  const executeAutoQa = async (recheck = false) => {
+  useEffect(() => {
+    if (!isAiAgentReview || !review.agentStartDate) return
+    setReview((current) => ({ ...current, agentStartDate: '' }))
+    setValidation((current) => {
+      const next = { ...current.fieldErrors }
+      delete next.agentStartDate
+      return { errors: current.errors.filter((item) => item !== 'Add the agent start date.'), fieldErrors: next }
+    })
+  }, [isAiAgentReview, review.agentStartDate])
+
+  const applyAutoQaResult = (result: Awaited<ReturnType<typeof runAutoQa>>, recheck: boolean) => {
+    const byNumber = new Map(result.criteria.map((item) => [Number(item.number), item]))
+    setReview((current) => ({
+      ...current,
+      confirmationNumber: current.confirmationNumber.trim() || result.detectedItinerary || current.confirmationNumber,
+      callLength: current.callLength.trim() || result.detectedCallLength || current.callLength,
+      callDate: current.callDate || (result.detectedCallDate && /^\d{4}-\d{2}-\d{2}$/.test(result.detectedCallDate) ? result.detectedCallDate : ''),
+      criteria: current.criteria.map((criterion) => {
+        const ai = byNumber.get(Number(criterion.number))
+        if (!ai || (recheck && manualOverrides.has(Number(criterion.number)))) return criterion
+        let status = ai.status
+        let criticalReason = ai.criticalReason || ''
+        if (status === '✕ Markdown' && current.qaType !== 'Groups' && isMatrixComplianceCriterion(criterion.name)) {
+          status = 'Critical'
+          criticalReason = criticalReason || 'Required Matrix process was not followed'
+        }
+        if (status === 'Critical' && !isCriticalCriterion(criterion.name)) status = '✕ Markdown'
+        return {
+          ...criterion,
+          status,
+          customNote: ai.note || '',
+          criticalReason: status === 'Critical'
+            ? (criticalReason || (criterion.name.toLowerCase().includes('documentation quality') ? 'Other Documentation Critical' : 'Other Matrix Critical'))
+            : '',
+          partialPoints: criterion.points / 2,
+          autoPoints: pointsForStatus(criterion.points, status),
+        }
+      }),
+    }))
+    if (!recheck) setManualOverrides(new Set())
+    setGuestEmail((current) => current.trim() || result.detectedEmail || '')
+    setGuestPhone((current) => current.trim() || result.detectedPhone || '')
+    setAutoQaTranscript(result.transcript || autoQaTranscript)
+    setAutoQaEvidence(Object.fromEntries(result.criteria.map((item) => [Number(item.number), item])) as Record<number, AutoQaCriterionResult>)
+    setValidation({ errors: [], fieldErrors: {} })
+    setAutoQaServiceOnline(true)
+  }
+
+  const executeAutoQa = async (recheck = false, allowWithoutDocumentation = false) => {
     if (!settings.autoQa?.enabled) {
       setAutoQaMessage('Auto QA is disabled in Admin settings.')
       return
@@ -181,53 +240,35 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
       setAutoQaMessage('Choose an audio file first.')
       return
     }
-    if (!documentation.trim()) {
-      setAutoQaMessage('Paste the itinerary / documentation notes before finishing Auto QA.')
+    if (recheck && !documentation.trim() && !allowWithoutDocumentation && !documentationManual) {
+      setAutoQaMessage('Paste the booking documentation / notes, or choose “I will QA documentation manually”.')
       return
     }
+
     setAutoQaBusy(true)
-    setAutoQaMessage(recheck ? 'Rechecking the QA with the current transcript, documentation and Matrix…' : 'Transcribing the call and reviewing it against the QA form, documentation and Matrix…')
+    setAutoQaMessage(
+      recheck
+        ? 'Finishing the QA with the transcript, Matrix and documentation…'
+        : 'Transcribing the call and finding the itinerary, guest email and guest phone…',
+    )
+
     try {
       const result = await runAutoQa({
         audioFile: recheck && autoQaTranscript ? undefined : (audioFile || undefined),
         transcript: recheck ? autoQaTranscript : '',
-        documentation,
+        documentation: documentationManual && !documentation.trim() ? '' : documentation,
         qaType: review.qaType,
         settings,
       })
 
-      const byNumber = new Map(result.criteria.map((item) => [Number(item.number), item]))
-      setReview((current) => ({
-        ...current,
-        confirmationNumber: current.confirmationNumber.trim() || result.detectedItinerary || current.confirmationNumber,
-        callLength: current.callLength.trim() || result.detectedCallLength || current.callLength,
-        callDate: current.callDate || (result.detectedCallDate && /^\d{4}-\d{2}-\d{2}$/.test(result.detectedCallDate) ? result.detectedCallDate : ''),
-        criteria: current.criteria.map((criterion) => {
-          const ai = byNumber.get(Number(criterion.number))
-          if (!ai || (recheck && manualOverrides.has(Number(criterion.number)))) return criterion
-          let status = ai.status
-          let criticalReason = ai.criticalReason || ''
-          if (status === '✕ Markdown' && current.qaType !== 'Groups' && isMatrixComplianceCriterion(criterion.name)) {
-            status = 'Critical'
-            criticalReason = criticalReason || 'Required Matrix process was not followed'
-          }
-          if (status === 'Critical' && !isCriticalCriterion(criterion.name)) status = '✕ Markdown'
-          return {
-            ...criterion,
-            status,
-            customNote: ai.note || '',
-            criticalReason: status === 'Critical' ? (criticalReason || (criterion.name.toLowerCase().includes('documentation quality') ? 'Other Documentation Critical' : 'Other Matrix Critical')) : '',
-            partialPoints: criterion.points / 2,
-            autoPoints: pointsForStatus(criterion.points, status),
-          }
-        }),
-      }))
-      if (!recheck) setManualOverrides(new Set())
-      setAutoQaTranscript(result.transcript || autoQaTranscript)
-      setAutoQaEvidence(Object.fromEntries(result.criteria.map((item) => [Number(item.number), item])) as Record<number, AutoQaCriterionResult>)
-      setValidation({ errors: [], fieldErrors: {} })
-      setAutoQaServiceOnline(true)
-      setAutoQaMessage(`QA review complete. Overall confidence ${Math.round(result.overallConfidence || 0)}%. Review the answers and edit any note you want before saving.`)
+      applyAutoQaResult(result, recheck)
+      if (recheck) {
+        setAutoQaStage('final')
+        setAutoQaMessage(`Final QA complete. Overall confidence ${Math.round(result.overallConfidence || 0)}%. Everything remains editable before you save.`)
+      } else {
+        setAutoQaStage('details')
+        setAutoQaMessage('Call transcript is ready and guest details were searched. Check the itinerary/email/phone below, then paste the booking notes and click Finish QA with Documentation.')
+      }
     } catch (error) {
       setAutoQaServiceOnline(false)
       setAutoQaMessage(error instanceof Error ? error.message : 'Auto QA failed.')
@@ -236,10 +277,21 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     }
   }
 
-  const score = useMemo(
-    () => review.criteria.reduce((sum, criterion) => sum + criterion.autoPoints, 0),
-    [review.criteria],
-  )
+  const downloadTranscript = () => {
+    if (!autoQaTranscript) return
+    const blob = new Blob([autoQaTranscript], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    const safeCallId = review.callId.trim() || 'call'
+    anchor.href = url
+    anchor.download = `${safeCallId}-transcript.txt`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const score = useMemo(() => review.criteria.reduce((sum, criterion) => sum + criterion.autoPoints, 0), [review.criteria])
   const kpi = review.qaType === 'Groups' ? settings.rules.groupsKpi : review.qaType === 'Sales' ? settings.rules.salesKpi : settings.rules.csKpi
   const hasCriticalError = review.qaType !== 'Groups' && Boolean(
     review.criteria.some((criterion) => criterion.status === 'Critical') ||
@@ -260,12 +312,29 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     })
   }
 
-  const updateQaType = (qaType: QaType) => {
+  const updateCallCenter = (value: string) => {
     setReview((current) => ({
       ...current,
-      qaType,
-      criteria: createCriterionAnswers(settings, qaType),
+      callCenter: value,
+      agentStartDate: value.trim().toLowerCase() === 'ai agents' ? '' : current.agentStartDate,
     }))
+    setValidation((current) => {
+      const next = { ...current.fieldErrors }
+      delete next.callCenter
+      if (value.trim().toLowerCase() === 'ai agents') delete next.agentStartDate
+      return { errors: current.errors, fieldErrors: next }
+    })
+  }
+
+  const handleDatePaste = (field: 'agentStartDate' | 'callDate') => (event: ClipboardEvent<HTMLInputElement>) => {
+    const normalized = normalizePastedDate(event.clipboardData.getData('text'))
+    if (!normalized) return
+    event.preventDefault()
+    updateField(field, normalized)
+  }
+
+  const updateQaType = (qaType: QaType) => {
+    setReview((current) => ({ ...current, qaType, criteria: createCriterionAnswers(settings, qaType) }))
     setValidation({ errors: [], fieldErrors: {} })
     setAutoQaEvidence({})
     setManualOverrides(new Set())
@@ -278,20 +347,12 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
       ...current,
       criteria: current.criteria.map((criterion, criterionIndex) => {
         if (criterionIndex !== index) return criterion
-
         const updated = { ...criterion, ...patch }
-
-        // Custom notes stay available for Followed so evaluators can leave
-        // optional positive/context notes. Markdown and Partial remain required
-        // by validation. Only clear an old note when the status is reset to blank.
         if (patch.status !== undefined && patch.status === '') {
           updated.customNote = ''
           updated.criticalReason = ''
         }
-        if (patch.status !== undefined && patch.status !== 'Critical') {
-          updated.criticalReason = ''
-        }
-
+        if (patch.status !== undefined && patch.status !== 'Critical') updated.criticalReason = ''
         updated.partialPoints = updated.points / 2
         updated.autoPoints = pointsForStatus(updated.points, updated.status)
         return updated
@@ -301,19 +362,12 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     setValidation((current) => {
       const next = { ...current.fieldErrors }
       delete next[`criterion-${index}`]
-
-      // Clear any note error as soon as the status no longer requires a note,
-      // or as soon as the evaluator starts typing a note.
       if (
         patch.customNote !== undefined ||
-        (patch.status !== undefined &&
-          patch.status !== '✕ Markdown' &&
-          patch.status !== 'Partial' &&
-          patch.status !== 'Critical')
+        (patch.status !== undefined && patch.status !== '✕ Markdown' && patch.status !== 'Partial' && patch.status !== 'Critical')
       ) {
         delete next[`note-${index}`]
       }
-
       return { errors: current.errors, fieldErrors: next }
     })
   }
@@ -329,17 +383,14 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
 
     const nextValidation = validateReview(nextReview, user, settings)
     setValidation(nextValidation)
-
     if (nextValidation.errors.length) {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
-
     if (user.guidedMode) {
       setShowChecklist(true)
       return
     }
-
     void submit(nextReview)
   }
 
@@ -348,6 +399,16 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
     setValidation({ errors: [], fieldErrors: {} })
     setShowChecklist(false)
     setDraftRestored(false)
+    setAudioFile(null)
+    setDocumentation('')
+    setDocumentationManual(false)
+    setAutoQaTranscript('')
+    setShowTranscript(false)
+    setGuestEmail('')
+    setGuestPhone('')
+    setAutoQaStage('idle')
+    setAutoQaEvidence({})
+    setManualOverrides(new Set())
     window.localStorage.removeItem(draftKey)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -362,27 +423,19 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
   }
 
   if (!user.permissions.canSubmitReviews) {
-    return (
-      <section className="panel empty-state">
-        Your account can’t submit reviews. An administrator can change this in Admin Control.
-      </section>
-    )
+    return <section className="panel empty-state">Your account can’t submit reviews. An administrator can change this in Admin Control.</section>
   }
 
   return (
     <div className="page-stack">
-      {draftRestored && (
-        <section className="draft-restored-banner">Draft restored automatically. Your unfinished review was recovered from this browser.</section>
-      )}
+      {draftRestored && <section className="draft-restored-banner">Draft restored automatically. Your unfinished review was recovered from this browser.</section>}
 
       {user.guidedMode && (
         <section className="guided-banner">
           <div className="guided-icon">✓</div>
           <div>
             <strong>Guided Mode is on</strong>
-            <p>
-              This mode gives friendly reminders, keeps scoring fields locked, and asks for a final double-check before saving.
-            </p>
+            <p>This mode gives friendly reminders, keeps scoring fields locked, and asks for a final double-check before saving.</p>
           </div>
         </section>
       )}
@@ -390,9 +443,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
       {validation.errors.length > 0 && (
         <section className="error-summary" role="alert">
           <strong>Please fix {validation.errors.length} item{validation.errors.length === 1 ? '' : 's'} before saving:</strong>
-          <ul>
-            {validation.errors.slice(0, 8).map((error) => <li key={error}>{error}</li>)}
-          </ul>
+          <ul>{validation.errors.slice(0, 8).map((error) => <li key={error}>{error}</li>)}</ul>
         </section>
       )}
 
@@ -410,10 +461,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
 
       <section className="qa-sheet-card">
         <div className="qa-sheet-header">
-          <div>
-            <p>HotelPlanner Quality Assurance</p>
-            <h1>QA Scorer</h1>
-          </div>
+          <div><p>HotelPlanner Quality Assurance</p><h1>QA Scorer</h1></div>
           <p className="qa-instruction">Select ✓ / ✕ / N/A / Partial for every criterion. Matrix and Documentation also allow Critical.</p>
         </div>
 
@@ -425,8 +473,11 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                 type="date"
                 value={review.agentStartDate}
                 onChange={(event) => updateField('agentStartDate', event.target.value)}
-                disabled={!user.permissions.canEditAgentDetails}
+                onPaste={handleDatePaste('agentStartDate')}
+                disabled={!user.permissions.canEditAgentDetails || isAiAgentReview}
               />
+              {isAiAgentReview && <em>Not required for AI Agents.</em>}
+              {!isAiAgentReview && <em>You can paste MM/DD/YYYY or YYYY-MM-DD.</em>}
               {validation.fieldErrors.agentStartDate && <small>{validation.fieldErrors.agentStartDate}</small>}
             </label>
 
@@ -443,19 +494,12 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                     <option key={evaluator.email} value={evaluator.displayName}>{evaluator.displayName}</option>
                   ))}
                 </select>
-              ) : (
-                <input value={user.displayName} readOnly />
-              )}
+              ) : <input value={user.displayName} readOnly />}
             </label>
 
             <label className={validation.fieldErrors.agentName ? 'field invalid' : 'field'}>
               <span>Agent Name</span>
-              <input
-                value={review.agentName}
-                onChange={(event) => updateField('agentName', event.target.value)}
-                placeholder=""
-                disabled={!user.permissions.canEditAgentDetails}
-              />
+              <input value={review.agentName} onChange={(event) => updateField('agentName', event.target.value)} disabled={!user.permissions.canEditAgentDetails} />
               {validation.fieldErrors.agentName && <small>{validation.fieldErrors.agentName}</small>}
               {watchListMatch && (
                 <div className="watch-agent-warning" role="status">
@@ -470,13 +514,15 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
               <input
                 list="qa-call-centers"
                 value={review.callCenter}
-                onChange={(event) => updateField('callCenter', event.target.value)}
+                onChange={(event) => updateCallCenter(event.target.value)}
                 placeholder="Pick or type a call center"
                 autoComplete="off"
                 disabled={!user.permissions.canEditAgentDetails}
               />
               <datalist id="qa-call-centers">
-                {settings.callCenters.map((center) => <option key={center} value={center} />)}
+                {Array.from(new Set([...settings.callCenters.filter((center) => center.toLowerCase() !== 'ai agents'), 'AI Agents'])).map((center) => (
+                  <option key={center} value={center} />
+                ))}
               </datalist>
               <em>Choose an existing call center or type a new one.</em>
               {validation.fieldErrors.callCenter && <small>{validation.fieldErrors.callCenter}</small>}
@@ -488,7 +534,6 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                 value={review.callId}
                 onChange={(event) => updateField('callId', event.target.value)}
                 onBlur={() => updateField('callId', normalizeCallId(review.callId))}
-                placeholder=""
                 disabled={!user.permissions.canEditAgentDetails}
               />
               {user.guidedMode && <em>Use CA followed by 32 hexadecimal characters.</em>}
@@ -509,21 +554,25 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
               <input
                 value={review.confirmationNumber}
                 onChange={(event) => updateField('confirmationNumber', event.target.value)}
-                placeholder=""
+                placeholder={settings.autoQa?.enabled ? 'AI will fill this if found in the call' : ''}
                 disabled={!user.permissions.canEditAgentDetails}
               />
-              
               {validation.fieldErrors.confirmationNumber && <small>{validation.fieldErrors.confirmationNumber}</small>}
+            </label>
+
+            <label className="field">
+              <span>Guest Email</span>
+              <input value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} placeholder="AI will fill this if found in the call" disabled={!user.permissions.canEditAgentDetails} />
+            </label>
+
+            <label className="field">
+              <span>Guest Phone</span>
+              <input value={guestPhone} onChange={(event) => setGuestPhone(event.target.value)} placeholder="AI will fill this if found in the call" disabled={!user.permissions.canEditAgentDetails} />
             </label>
 
             <label className={validation.fieldErrors.callLength ? 'field invalid' : 'field'}>
               <span>Length of Call</span>
-              <input
-                value={review.callLength}
-                onChange={(event) => updateField('callLength', event.target.value)}
-                placeholder=""
-                disabled={!user.permissions.canEditAgentDetails}
-              />
+              <input value={review.callLength} onChange={(event) => updateField('callLength', event.target.value)} disabled={!user.permissions.canEditAgentDetails} />
               {validation.fieldErrors.callLength && <small>{validation.fieldErrors.callLength}</small>}
             </label>
 
@@ -533,8 +582,10 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                 type="date"
                 value={review.callDate}
                 onChange={(event) => updateField('callDate', event.target.value)}
+                onPaste={handleDatePaste('callDate')}
                 disabled={!user.permissions.canEditAgentDetails}
               />
+              <em>You can paste MM/DD/YYYY or YYYY-MM-DD.</em>
               {validation.fieldErrors.callDate && <small>{validation.fieldErrors.callDate}</small>}
             </label>
           </div>
@@ -544,8 +595,8 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
               <div className="autoqa-review-heading">
                 <div>
                   <p className="eyebrow">Auto QA</p>
-                  <h3>Call + Documentation Review</h3>
-                  <p className="muted">Upload the call, paste the booking documentation, then review every prefilled QA answer before saving.</p>
+                  <h3>Call → Guest Details → Documentation → Final QA</h3>
+                  <p className="muted">Run the call first. After the itinerary is found, paste the booking notes. The final pass reads the transcript, Matrix and documentation together.</p>
                 </div>
                 <span className={`service-status ${autoQaServiceOnline === true ? 'online' : autoQaServiceOnline === false ? 'offline' : ''}`}>
                   {autoQaServiceOnline === true ? 'Local service online' : autoQaServiceOnline === false ? 'Local service offline' : 'Checking local service…'}
@@ -562,6 +613,10 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                       setAudioFile(event.target.files?.[0] || null)
                       setAutoQaTranscript('')
                       setAutoQaEvidence({})
+                      setGuestEmail('')
+                      setGuestPhone('')
+                      setAutoQaStage('idle')
+                      setShowTranscript(false)
                     }}
                     disabled={autoQaBusy}
                   />
@@ -569,25 +624,78 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                 </label>
 
                 <label className="field autoqa-documentation-field">
-                  <span>Documentation / Itinerary Notes</span>
+                  <span>Documentation / Booking Notes</span>
                   <textarea
                     value={documentation}
-                    onChange={(event) => setDocumentation(event.target.value)}
-                    placeholder="Copy and paste the full Refunds / Notes / Zendesk / itinerary documentation here…"
+                    onChange={(event) => {
+                      setDocumentation(event.target.value)
+                      if (event.target.value.trim()) setDocumentationManual(false)
+                    }}
+                    placeholder="After Auto QA finds the itinerary, copy and paste the full booking / Zendesk / Refunds / itinerary notes here…"
                     disabled={autoQaBusy}
                   />
+                  {autoQaStage === 'details' && <em>Paste the notes now, then click Finish QA with Documentation.</em>}
                 </label>
               </div>
 
               <div className="autoqa-actions">
                 <button type="button" className="primary-button" onClick={() => void executeAutoQa(false)} disabled={!audioFile || autoQaBusy}>
-                  {autoQaBusy ? 'Reviewing…' : 'Run Auto QA'}
+                  {autoQaBusy && autoQaStage === 'idle' ? 'Transcribing…' : '1. Transcribe + Find Guest Details'}
                 </button>
-                <button type="button" className="secondary-button" onClick={() => void executeAutoQa(true)} disabled={!autoQaTranscript || autoQaBusy}>
-                  Recheck QA with Ollama
+                <button type="button" className="primary-button" onClick={() => void executeAutoQa(true)} disabled={!autoQaTranscript || autoQaBusy || (!documentation.trim() && !documentationManual)}>
+                  {autoQaBusy && autoQaStage !== 'idle' ? 'Finishing QA…' : '2. Finish QA with Documentation'}
                 </button>
-                {autoQaTranscript && <span className="muted">Transcript ready · {autoQaTranscript.split(/\s+/).filter(Boolean).length} words{manualOverrides.size ? ` · ${manualOverrides.size} manual edit${manualOverrides.size === 1 ? '' : 's'} protected` : ''}</span>}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setDocumentationManual(true)
+                    setAutoQaMessage('Documentation will be reviewed manually. You can finish the Auto QA using the transcript + Matrix, then edit Documentation Quality yourself.')
+                  }}
+                  disabled={!autoQaTranscript || autoQaBusy}
+                >
+                  I will QA documentation manually
+                </button>
               </div>
+
+              {autoQaTranscript && (
+                <div className="autoqa-actions">
+                  <button type="button" className="secondary-button" onClick={() => setShowTranscript((current) => !current)}>
+                    {showTranscript ? 'Hide Transcript' : 'View Transcript'}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={downloadTranscript}>Download Transcript (.txt)</button>
+                  <span className="muted">Transcript ready · {autoQaTranscript.split(/\s+/).filter(Boolean).length} words{manualOverrides.size ? ` · ${manualOverrides.size} manual edit${manualOverrides.size === 1 ? '' : 's'} protected` : ''}</span>
+                </div>
+              )}
+
+              {autoQaStage !== 'idle' && (
+                <div className="issue-box">
+                  <span>{autoQaStage === 'final' ? 'Final Auto QA Details — editable' : 'Guest Details Found — verify before continuing'}</span>
+                  <div className="details-grid">
+                    <label className="field">
+                      <span>Itinerary / Confirmation</span>
+                      <input value={review.confirmationNumber} onChange={(event) => updateField('confirmationNumber', event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Guest Email</span>
+                      <input value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Guest Phone</span>
+                      <input value={guestPhone} onChange={(event) => setGuestPhone(event.target.value)} />
+                    </label>
+                  </div>
+                  <p className="muted">Nothing here locks the screen. You can edit these values, paste documentation, scroll the QA, or open/download the transcript at any time.</p>
+                </div>
+              )}
+
+              {showTranscript && autoQaTranscript && (
+                <div className="issue-box">
+                  <span>Call Transcript</span>
+                  <textarea value={autoQaTranscript} readOnly rows={14} />
+                </div>
+              )}
+
               {autoQaMessage && <div className="validation-banner"><span>{autoQaMessage}</span></div>}
             </section>
           )}
@@ -604,14 +712,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
           <table className="criteria-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>QA Criteria</th>
-                <th>Max</th>
-                <th>Select</th>
-                <th>Partial Points</th>
-                <th>Auto Points</th>
-                <th>Notes / Issue Found</th>
-                <th>Custom Notes</th>
+                <th>#</th><th>QA Criteria</th><th>Max</th><th>Select</th><th>Partial Points</th><th>Auto Points</th><th>Notes / Issue Found</th><th>Custom Notes</th>
               </tr>
             </thead>
             <tbody>
@@ -630,10 +731,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                           return
                         }
                         if (nextStatus === '✕ Markdown' && review.qaType !== 'Groups' && isMatrixComplianceCriterion(criterion.name)) {
-                          updateCriterion(index, {
-                            status: 'Critical',
-                            criticalReason: 'Required Matrix process was not followed',
-                          })
+                          updateCriterion(index, { status: 'Critical', criticalReason: 'Required Matrix process was not followed' })
                           return
                         }
                         updateCriterion(index, { status: nextStatus })
@@ -645,11 +743,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                       {review.qaType !== 'Groups' && isCriticalCriterion(criterion.name) && <option value="Critical">Critical</option>}
                     </select>
                     {criterion.status === 'Critical' && criterion.criticalReason && (
-                      <button
-                        type="button"
-                        className="critical-reason-button"
-                        onClick={() => setCriticalModal({ index, reason: criterion.criticalReason || '', note: criterion.customNote || '' })}
-                      >
+                      <button type="button" className="critical-reason-button" onClick={() => setCriticalModal({ index, reason: criterion.criticalReason || '', note: criterion.customNote || '' })}>
                         Reason: {criterion.criticalReason}
                       </button>
                     )}
@@ -669,15 +763,13 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                               ? 'Required: explain the issue clearly…'
                               : criterion.status === 'Critical'
                                 ? 'Optional coaching comments. The Critical reason is saved above…'
-                              : criterion.status === '✓ Followed'
-                                ? 'Optional: add a positive note or extra context…'
-                                : 'Optional note…'
+                                : criterion.status === '✓ Followed'
+                                  ? 'Optional: add a positive note or extra context…'
+                                  : 'Optional note…'
                           }
                           disabled={!user.permissions.canEditCustomNotes}
                         />
-                        {criterion.status === '✓ Followed' && !criterion.customNote.trim() && (
-                          <small className="optional-note-hint">Optional for Followed.</small>
-                        )}
+                        {criterion.status === '✓ Followed' && !criterion.customNote.trim() && <small className="optional-note-hint">Optional for Followed.</small>}
                         {validation.fieldErrors[`note-${index}`] && <small>{validation.fieldErrors[`note-${index}`]}</small>}
                         {autoQaEvidence[criterion.number] && (
                           <details className={`autoqa-evidence ${autoQaEvidence[criterion.number].confidence < 75 ? 'review-me' : ''}`}>
@@ -690,9 +782,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
                           </details>
                         )}
                       </>
-                    ) : (
-                      <span className="note-not-required">Select a status first.</span>
-                    )}
+                    ) : <span className="note-not-required">Select a status first.</span>}
                   </td>
                 </tr>
               ))}
@@ -723,10 +813,7 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
         </div>
 
         <div className="save-bar">
-          <div>
-            <strong>Ready to save?</strong>
-            <span>The review will be saved directly to Firebase and included in both Excel export formats.</span>
-          </div>
+          <div><strong>Ready to save?</strong><span>The review will be saved directly to Firebase and included in both Excel export formats.</span></div>
           <button type="button" className="primary-button save-button" onClick={prepareSubmit} disabled={saving}>
             {saving ? 'Saving Review…' : 'Save Review'}
           </button>
@@ -742,22 +829,14 @@ export function ReviewPage({ user, settings, evaluators, watchListAgents, onSave
             <p className="critical-warning-copy">Choosing Critical makes the entire QA 0% / FAIL. You can still complete every category and add coaching comments.</p>
             <label className="field">
               <span>Critical Reason</span>
-              <select
-                value={criticalModal.reason}
-                onChange={(event) => setCriticalModal((current) => current ? { ...current, reason: event.target.value } : current)}
-                autoFocus
-              >
+              <select value={criticalModal.reason} onChange={(event) => setCriticalModal((current) => current ? { ...current, reason: event.target.value } : current)} autoFocus>
                 <option value="">Select a reason</option>
                 {criticalReasonsFor(review.criteria[criticalModal.index].name).map((reason) => <option key={reason} value={reason}>{reason}</option>)}
               </select>
             </label>
             <label className="field">
               <span>Coaching Comment (Optional)</span>
-              <textarea
-                value={criticalModal.note}
-                onChange={(event) => setCriticalModal((current) => current ? { ...current, note: event.target.value } : current)}
-                placeholder="Add details the Call Center team can use for coaching…"
-              />
+              <textarea value={criticalModal.note} onChange={(event) => setCriticalModal((current) => current ? { ...current, note: event.target.value } : current)} placeholder="Add details the Call Center team can use for coaching…" />
             </label>
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setCriticalModal(null)}>Cancel</button>
