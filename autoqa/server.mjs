@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 
 const PORT = Number(process.env.AUTO_QA_PORT || 8788)
 const HOST = '127.0.0.1'
@@ -49,7 +48,6 @@ async function transcribeAudio(audioBase64, fileName) {
   }
 }
 
-
 function matrixKeywords(value) {
   const stop = new Set(['the','and','for','that','with','from','this','have','will','was','are','but','not','you','your','guest','agent','call','hotel','reservation','booking','please','into','when','then','they','their','them','our','has','had','can','could','would','should','about','only','need','needs'])
   return new Set(String(value || '').toLowerCase().match(/[a-z0-9]{3,}/g)?.filter((word) => !stop.has(word)) || [])
@@ -75,8 +73,56 @@ function selectRelevantMatrix(matrixText, evidenceText) {
     selected.add(item.line)
     if (item.index > 0 && lines[item.index - 1]?.startsWith('## ')) selected.add(lines[item.index - 1])
   }
-  const result = [...selected].join('\n')
-  return result.slice(0, 24000)
+  return [...selected].join('\n').slice(0, 24000)
+}
+
+function cleanItinerary(value) {
+  const match = String(value || '').match(/\bH\s*[0-9][0-9\s-]{5,20}\b/i)
+  return match ? match[0].replace(/[\s-]+/g, '').toUpperCase() : ''
+}
+
+function spokenDigitsToNumber(value) {
+  const map = {
+    zero: '0', oh: '0', o: '0', one: '1', two: '2', three: '3', four: '4',
+    five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+  }
+  return String(value || '').toLowerCase().replace(/\b(zero|oh|o|one|two|three|four|five|six|seven|eight|nine)\b/g, (word) => map[word] || word)
+}
+
+function fallbackPhone(text) {
+  const normalized = spokenDigitsToNumber(text)
+  const matches = normalized.match(/(?:\+?1[\s().-]*)?(?:\d[\s().-]*){10,11}/g) || []
+  for (const raw of matches) {
+    let digits = raw.replace(/\D/g, '')
+    if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1)
+    if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  return ''
+}
+
+function fallbackEmail(text) {
+  const source = String(text || '')
+  const direct = source.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)
+  if (direct) return direct[0].toLowerCase()
+
+  const spoken = source
+    .toLowerCase()
+    .replace(/\s+(?:at sign|at)\s+/g, '@')
+    .replace(/\s+(?:dot|period)\s+/g, '.')
+    .replace(/\s+(?:underscore)\s+/g, '_')
+    .replace(/\s+(?:dash|hyphen)\s+/g, '-')
+    .replace(/\s*@\s*/g, '@')
+    .replace(/\s*\.\s*/g, '.')
+  const spokenMatch = spoken.match(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i)
+  return spokenMatch ? spokenMatch[0] : ''
+}
+
+function applyFallbackDetections(result, transcript, documentation) {
+  const evidence = `${transcript || ''}\n${documentation || ''}`
+  result.detectedItinerary = cleanItinerary(result.detectedItinerary) || cleanItinerary(evidence)
+  result.detectedEmail = fallbackEmail(result.detectedEmail) || fallbackEmail(evidence)
+  result.detectedPhone = fallbackPhone(result.detectedPhone) || fallbackPhone(evidence)
+  return result
 }
 
 function buildPrompt(input, transcript) {
@@ -84,13 +130,15 @@ function buildPrompt(input, transcript) {
   const docs = String(input.documentation || '').slice(0, 70000)
   const matrix = selectRelevantMatrix(input.matrixText, `${transcript}\n${docs}`)
   const sales = input.qaType === 'Sales' ? String(input.salesQaFormText || '').slice(0, 24000) : ''
-  return `You are a strict HotelPlanner Quality Assurance evaluator. Grade only from the evidence provided. Never invent facts. Use the active QA criteria and active Service Matrix as the source of truth. Documentation must be evaluated together with what happened on the call. If evidence is missing, lower confidence and choose the most defensible status.\n\nSTATUS RULES:\n- ✓ Followed = criterion was met.\n- ✕ Markdown = criterion was not met.\n- Partial = criterion was partly met.\n- N/A = criterion truly does not apply.\n- Critical may ONLY be used for Matrix Compliance or Documentation Quality when the evidence supports a critical failure.\n- A Matrix Compliance markdown that reflects a required Matrix process not followed should be Critical.\n- Do not mark a criterion down for information that cannot reasonably be observed in the call/documentation.\n- Notes must be short, specific, professional, and editable by a human reviewer.\n- Evidence excerpts must be concise and copied/paraphrased from the supplied material only.\n\nQA TYPE: ${input.qaType}\n\nQA CRITERIA:\n${criteria}\n\nACTIVE SERVICE MATRIX:\n${matrix || '[No matrix loaded]'}\n\n${sales ? `ACTIVE GROUP SALES QA FORM:\n${sales}\n\n` : ''}CALL TRANSCRIPT:\n${String(transcript || '').slice(0, 70000)}\n\nDOCUMENTATION / ITINERARY NOTES:\n${docs || '[No documentation pasted]'}\n\nReturn one result for every QA criterion. Detect an itinerary beginning with H if present. Detect call date only if stated with confidence. Calculate confidence from 0-100. Do not mention AI, Ollama, automation, or model names in QA notes.`
+  return `You are a strict HotelPlanner Quality Assurance evaluator. Grade only from the evidence provided. Never invent facts. Use the active QA criteria and active Service Matrix as the source of truth. Documentation must be evaluated together with what happened on the call. If documentation has not been pasted yet, do a preliminary call-only review and do not invent documentation evidence. If evidence is missing, lower confidence and choose the most defensible status.\n\nGUEST DETAIL EXTRACTION:\n- Find the HotelPlanner itinerary / confirmation number, especially values beginning with H.\n- Find the guest email even when spoken as words such as "john dot smith at gmail dot com".\n- Find the guest phone even when digits are spoken one-by-one.\n- Return an empty string when a value cannot be found. Never invent guest details.\n\nSTATUS RULES:\n- ✓ Followed = criterion was met.\n- ✕ Markdown = criterion was not met.\n- Partial = criterion was partly met.\n- N/A = criterion truly does not apply.\n- Critical may ONLY be used for Matrix Compliance or Documentation Quality when the evidence supports a critical failure.\n- A Matrix Compliance markdown that reflects a required Matrix process not followed should be Critical.\n- Do not mark a criterion down for information that cannot reasonably be observed in the call/documentation.\n- Notes must be short, specific, professional, and editable by a human reviewer.\n- Evidence excerpts must be concise and copied/paraphrased from the supplied material only.\n\nQA TYPE: ${input.qaType}\n\nQA CRITERIA:\n${criteria}\n\nACTIVE SERVICE MATRIX:\n${matrix || '[No matrix loaded]'}\n\n${sales ? `ACTIVE GROUP SALES QA FORM:\n${sales}\n\n` : ''}CALL TRANSCRIPT:\n${String(transcript || '').slice(0, 70000)}\n\nDOCUMENTATION / ITINERARY NOTES:\n${docs || '[No documentation pasted yet]'}\n\nReturn one result for every QA criterion. Detect call date only if stated with confidence. Calculate confidence from 0-100. Do not mention AI, Ollama, automation, or model names in QA notes.`
 }
 
 const resultSchema = {
   type: 'object',
   properties: {
     detectedItinerary: { type: 'string' },
+    detectedEmail: { type: 'string' },
+    detectedPhone: { type: 'string' },
     detectedCallLength: { type: 'string' },
     detectedCallDate: { type: 'string' },
     overallConfidence: { type: 'number' },
@@ -113,7 +161,7 @@ const resultSchema = {
       },
     },
   },
-  required: ['detectedItinerary','detectedCallLength','detectedCallDate','overallConfidence','summary','criteria'],
+  required: ['detectedItinerary','detectedEmail','detectedPhone','detectedCallLength','detectedCallDate','overallConfidence','summary','criteria'],
 }
 
 async function callOllama(input, transcript) {
@@ -127,7 +175,7 @@ async function callOllama(input, transcript) {
       format: resultSchema,
       options: { temperature: 0.05, num_ctx: 32768 },
       messages: [
-        { role: 'system', content: 'You are a precise QA auditor. Follow the supplied policy, criteria, evidence, and JSON schema exactly.' },
+        { role: 'system', content: 'You are a precise QA auditor and guest-detail extractor. Follow the supplied policy, criteria, evidence, and JSON schema exactly.' },
         { role: 'user', content: buildPrompt(input, transcript) },
       ],
     }),
@@ -136,8 +184,7 @@ async function callOllama(input, transcript) {
   if (!response.ok) throw new Error(payload?.error || `Ollama returned HTTP ${response.status}`)
   const content = payload?.message?.content
   if (!content) throw new Error('Ollama returned no QA result.')
-  const parsed = typeof content === 'string' ? JSON.parse(content) : content
-  return parsed
+  return typeof content === 'string' ? JSON.parse(content) : content
 }
 
 const server = http.createServer(async (req, res) => {
@@ -162,7 +209,8 @@ const server = http.createServer(async (req, res) => {
       input.transcribedDurationSeconds = Array.isArray(transcription.segments) && transcription.segments.length ? Number(transcription.segments.at(-1)?.end || 0) : 0
     }
     if (!transcript) throw new Error('No speech was detected in the audio.')
-    const result = await callOllama(input, transcript)
+
+    const result = applyFallbackDetections(await callOllama(input, transcript), transcript, input.documentation)
     if (!result.detectedCallLength && input.transcribedDurationSeconds) {
       const seconds = Math.max(0, Math.round(Number(input.transcribedDurationSeconds)))
       result.detectedCallLength = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
