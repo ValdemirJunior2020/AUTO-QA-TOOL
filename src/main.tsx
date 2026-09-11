@@ -26,26 +26,52 @@ function normalizePastedDate(value: string): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-// Chrome's native type="date" control is segmented and can swallow a normal
-// Ctrl+V paste such as 7/9/2026. Catch the paste before the browser processes
-// the individual month/day/year segments, then send a normal input/change
-// event so React-controlled date fields update everywhere in the app.
+function setDateInputValue(target: HTMLInputElement, rawValue: string): boolean {
+  const normalized = normalizePastedDate(rawValue)
+  if (!normalized) return false
+
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  valueSetter?.call(target, normalized)
+  target.dispatchEvent(new Event('input', { bubbles: true }))
+  target.dispatchEvent(new Event('change', { bubbles: true }))
+  return true
+}
+
+// Native Chrome date controls are segmented and often swallow Ctrl+V.
+// Support both the normal paste event and Ctrl/Cmd+V against the focused
+// date input so values such as 7/9/2026 paste in one shot.
 document.addEventListener(
   'paste',
   (event) => {
-    const target = event.target
+    const target = document.activeElement
     if (!(target instanceof HTMLInputElement) || target.type !== 'date' || target.disabled || target.readOnly) return
 
-    const normalized = normalizePastedDate(event.clipboardData?.getData('text') || '')
-    if (!normalized) return
+    if (setDateInputValue(target, event.clipboardData?.getData('text') || '')) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+  },
+  true,
+)
+
+document.addEventListener(
+  'keydown',
+  (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v') return
+
+    const target = document.activeElement
+    if (!(target instanceof HTMLInputElement) || target.type !== 'date' || target.disabled || target.readOnly) return
+    if (!navigator.clipboard?.readText) return
 
     event.preventDefault()
     event.stopPropagation()
 
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-    valueSetter?.call(target, normalized)
-    target.dispatchEvent(new Event('input', { bubbles: true }))
-    target.dispatchEvent(new Event('change', { bubbles: true }))
+    void navigator.clipboard.readText().then((text) => {
+      setDateInputValue(target, text)
+    }).catch(() => {
+      // If Clipboard API access is unavailable, the regular paste listener above
+      // still handles browsers that expose clipboardData on the paste event.
+    })
   },
   true,
 )
